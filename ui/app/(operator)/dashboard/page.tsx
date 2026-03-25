@@ -1,51 +1,47 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield, Zap, AlertTriangle, Activity } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Shield, Zap, AlertTriangle, Activity, Server, Calendar, Globe } from "lucide-react";
 import { useStream } from "../layout";
 import { SeverityBadge, formatTime } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { events, stats, connected } = useStream();
-  const [topAttackers, setTopAttackers] = useState<any[]>([]);
+  const [topAttackers,   setTopAttackers]   = useState<any[]>([]);
   const [recentSessions, setRecentSessions] = useState<any[]>([]);
+  const [activeSensors,  setActiveSensors]  = useState<number | null>(null);
+  const [sessionsStats,  setSessionsStats]  = useState<any>(null);
+  const [histogram,      setHistogram]      = useState<any[]>([]);
 
-  // ── Load initial data ──────────────────────────────────────────────────────
   useEffect(() => {
     fetch(apiPath("/events/top-attackers?limit=8"), { credentials: "include" })
       .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setTopAttackers(d.items ?? []); });
 
     fetch(apiPath("/sessions?is_actionable=true&limit=5"), { credentials: "include" })
       .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setRecentSessions(d.items ?? []); });
+
+    fetch(apiPath("/health"), { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setActiveSensors(d.services?.sensors?.count ?? 0); });
+
+    fetch(apiPath("/sessions/stats"), { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setSessionsStats(d); });
+
+    fetch(apiPath("/events/histogram?hours=24"), { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setHistogram(d.buckets ?? []); });
   }, []);
 
   const kpis = [
-    {
-      label: "Total Sessions",
-      value: stats?.total_sessions ?? "—",
-      icon:  Shield,
-      color: "text-accent",
-    },
-    {
-      label: "Critical / High",
-      value: stats?.critical_sessions ?? "—",
-      icon:  AlertTriangle,
-      color: "text-severity-high",
-    },
-    {
-      label: "CPU STOP Events",
-      value: stats?.cpu_stop_count ?? "—",
-      icon:  Zap,
-      color: "text-severity-critical",
-    },
-    {
-      label: "Events (24h)",
-      value: stats?.events_24h ?? "—",
-      icon:  Activity,
-      color: "text-severity-medium",
-    },
+    { label: "Total Sessions",   value: stats?.total_sessions ?? "—",      icon: Shield,       color: "text-accent" },
+    { label: "Critical / High",  value: stats?.critical_sessions ?? "—",   icon: AlertTriangle, color: "text-severity-high" },
+    { label: "CPU STOP Events",  value: stats?.cpu_stop_count ?? "—",      icon: Zap,          color: "text-severity-critical" },
+    { label: "Events (24h)",     value: stats?.events_24h ?? "—",          icon: Activity,     color: "text-severity-medium" },
+    { label: "Active Sensors",   value: activeSensors ?? "—",              icon: Server,       color: "text-accent" },
+    { label: "Sessions Today",   value: sessionsStats?.sessions_today ?? "—", icon: Calendar,  color: "text-severity-low" },
+    { label: "Unique IPs (24h)", value: sessionsStats?.unique_ips_24h ?? "—", icon: Globe,     color: "text-text-muted" },
   ];
 
   return (
@@ -65,7 +61,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── KPI row ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
         {kpis.map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="kpi-card">
             <div className="flex items-center justify-between mb-2">
@@ -103,7 +99,8 @@ export default function DashboardPage() {
                 <tbody>
                   {events.map((ev) => (
                     <tr key={ev.event_id}
-                      className={ev.cpu_stop ? "bg-red-900/10 border-l-2 border-severity-critical" : ""}>
+                      className={`cursor-pointer ${ev.cpu_stop ? "bg-red-900/10 border-l-2 border-severity-critical" : ""}`}
+                      onClick={() => ev.session_id && router.push(`/sessions/${ev.session_id}`)}>
                       <td className="font-mono text-xs text-text-muted whitespace-nowrap">
                         {formatTime(ev.timestamp)}
                       </td>
@@ -131,7 +128,7 @@ export default function DashboardPage() {
             {topAttackers.length === 0 ? (
               <div className="text-center py-8 text-text-faint text-sm">No data yet</div>
             ) : (
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={topAttackers} layout="vertical" margin={{ left: 8 }}>
                   <XAxis type="number" tick={{ fill: "#94A3B8", fontSize: 11 }} tickLine={false} axisLine={false} />
                   <YAxis
@@ -146,7 +143,7 @@ export default function DashboardPage() {
                     labelStyle={{ color: "#F8FAFC" }}
                     itemStyle={{ color: "#94A3B8" }}
                   />
-                  <Bar dataKey="event_count" radius={[0, 4, 4, 0]} maxBarSize={20}>
+                  <Bar dataKey="event_count" radius={[0, 4, 4, 0]} maxBarSize={18}>
                     {topAttackers.map((entry, i) => (
                       <Cell key={i} fill={
                         entry.max_severity === "critical" ? "#EF4444" :
@@ -161,6 +158,24 @@ export default function DashboardPage() {
             )}
           </div>
 
+          {/* Protocol distribution */}
+          {sessionsStats?.protocols?.length > 0 && (
+            <div className="px-4 pb-4 border-t border-bg-border pt-3">
+              <p className="text-xs font-semibold text-text-muted uppercase mb-2">Protocol Distribution</p>
+              <ResponsiveContainer width="100%" height={110}>
+                <BarChart data={sessionsStats.protocols} margin={{ left: -20 }}>
+                  <XAxis dataKey="protocol" tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    contentStyle={{ background: "#1A2236", border: "1px solid #1E2A3B", borderRadius: 6, fontSize: 12 }}
+                    labelStyle={{ color: "#F8FAFC" }} itemStyle={{ color: "#94A3B8" }}
+                  />
+                  <Bar dataKey="count" fill="#3B82F6" radius={[4, 4, 0, 0]} maxBarSize={32} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {/* Actionable sessions */}
           <div className="px-4 pb-4 border-t border-bg-border pt-3">
             <p className="text-xs font-semibold text-text-muted uppercase mb-2">Actionable Sessions</p>
@@ -169,7 +184,8 @@ export default function DashboardPage() {
             ) : (
               <div className="space-y-1.5">
                 {recentSessions.slice(0, 4).map((s) => (
-                  <div key={s.id} className="flex items-center justify-between text-xs">
+                  <div key={s.id} className="flex items-center justify-between text-xs cursor-pointer hover:opacity-80"
+                    onClick={() => router.push(`/sessions/${s.id}`)}>
                     <span className="font-mono text-text-muted">{s.source_ip}</span>
                     <div className="flex items-center gap-1.5">
                       {s.cpu_stop_occurred && <span className="text-severity-critical">⚡</span>}
@@ -182,6 +198,28 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* 24h Event Histogram */}
+      {histogram.length > 0 && (
+        <div className="card">
+          <div className="px-4 py-3 border-b border-bg-border">
+            <h2 className="font-semibold text-sm text-text-primary">Events — Last 24 Hours</h2>
+          </div>
+          <div className="p-4">
+            <ResponsiveContainer width="100%" height={160}>
+              <BarChart data={histogram} margin={{ left: -20 }}>
+                <XAxis dataKey="hour" tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                <YAxis tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ background: "#1A2236", border: "1px solid #1E2A3B", borderRadius: 6, fontSize: 12 }}
+                  labelStyle={{ color: "#F8FAFC" }} itemStyle={{ color: "#94A3B8" }}
+                />
+                <Bar dataKey="count" fill="#3B82F6" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

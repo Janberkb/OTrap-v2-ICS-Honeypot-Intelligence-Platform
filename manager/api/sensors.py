@@ -371,20 +371,6 @@ async def generate_join_token(
         source_ip=request.client.host if request.client else None,
     )
 
-    if settings.grpc_host and _is_loopback_host(settings.grpc_host):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "GRPC_HOST_LOOPBACK",
-                "message": (
-                    "GRPC_HOST is bound to loopback (127.0.0.1). "
-                    "Remote sensors cannot reach the manager. "
-                    "Set GRPC_HOST to the management server's reachable IP in .env "
-                    "and restart the manager before generating sensor tokens."
-                ),
-            },
-        )
-
     warnings = _build_warnings(manager_addr=manager_addr, grpc_host=settings.grpc_host)
     sensor_id = str(sensor.id)
     sensor_image_ref = settings.sensor_image_ref

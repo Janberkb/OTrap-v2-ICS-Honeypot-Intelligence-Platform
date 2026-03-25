@@ -34,7 +34,11 @@
       "Bash(docker cp:*)",
       "Bash(npx tsc:*)",
       "Bash(python3 -c \"import pymodbus; print\\(''pymodbus ok''\\)\")",
-      "Bash(python3 -c \"import snap7; print\\(''snap7 ok''\\)\")"
+      "Bash(python3 -c \"import snap7; print\\(''snap7 ok''\\)\")",
+      "Bash(curl -s -c /tmp/test_login.txt \"http://127.0.0.1:8080/api/v1/auth/csrf-token\")",
+      "Read(//tmp/**)",
+      "Bash(curl -sv \"http://127.0.0.1:8080/api/v1/auth/csrf-token\")",
+      "Bash(curl -sv \"http://127.0.0.1:3000/api/v1/auth/csrf-token\")"
     ]
   }
 }

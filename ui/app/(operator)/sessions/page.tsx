@@ -6,25 +6,36 @@ import { Filter, Download, RefreshCw } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
-const SEVERITIES   = ["", "noise", "low", "medium", "high", "critical"];
-const SIGNAL_TIERS = ["", "noise", "recon", "suspicious", "impact"];
-const PROTOCOLS    = ["", "s7comm", "modbus", "http", "https", "tcp"];
+const SEVERITIES      = ["", "noise", "low", "medium", "high", "critical"];
+const SIGNAL_TIERS    = ["", "noise", "recon", "suspicious", "impact"];
+const PROTOCOLS       = ["", "s7comm", "modbus", "http", "https", "tcp"];
+const TRIAGE_STATUSES = ["", "new", "investigating", "reviewed", "false_positive", "escalated"];
+
+const TRIAGE_BADGE: Record<string, string> = {
+  new:            "badge-medium",
+  investigating:  "badge-noise",
+  reviewed:       "badge-low",
+  false_positive: "text-xs px-2 py-0.5 rounded-full bg-bg-elevated text-text-muted font-medium",
+  escalated:      "badge-critical",
+};
 
 interface Filters {
-  severity:     string;
-  signal_tier:  string;
-  protocol:     string;
-  source_ip:    string;
-  cpu_stop:     string;
-  has_iocs:     string;
-  is_actionable:string;
-  from_dt:      string;
-  to_dt:        string;
+  severity:      string;
+  signal_tier:   string;
+  protocol:      string;
+  source_ip:     string;
+  cpu_stop:      string;
+  has_iocs:      string;
+  is_actionable: string;
+  from_dt:       string;
+  to_dt:         string;
+  triage_status: string;
 }
 
 const DEFAULT_FILTERS: Filters = {
   severity: "", signal_tier: "", protocol: "", source_ip: "",
   cpu_stop: "", has_iocs: "", is_actionable: "", from_dt: "", to_dt: "",
+  triage_status: "",
 };
 
 export default function SessionsPage() {
@@ -147,6 +158,12 @@ export default function SessionsPage() {
               <option value="false">No</option>
             </select>
           </div>
+          <div>
+            <label>Triage Status</label>
+            <select className="select" value={filters.triage_status} onChange={(e) => setFilter("triage_status", e.target.value)}>
+              {TRIAGE_STATUSES.map((s) => <option key={s} value={s}>{s ? s.replace(/_/g, " ") : "All"}</option>)}
+            </select>
+          </div>
           <div className="flex items-end">
             <button onClick={() => setFilters(DEFAULT_FILTERS)} className="btn-secondary w-full text-xs">
               Clear Filters
@@ -180,14 +197,15 @@ export default function SessionsPage() {
                 <th>IOCs</th>
                 <th>Duration</th>
                 <th>Started</th>
+                <th>Status</th>
                 <th>Flags</th>
               </tr>
             </thead>
             <tbody>
               {loading && sessions.length === 0 ? (
-                <tr><td colSpan={10} className="text-center text-text-faint py-12">Loading…</td></tr>
+                <tr><td colSpan={11} className="text-center text-text-faint py-12">Loading…</td></tr>
               ) : sessions.length === 0 ? (
-                <tr><td colSpan={10} className="text-center text-text-faint py-12">No sessions match your filters</td></tr>
+                <tr><td colSpan={11} className="text-center text-text-faint py-12">No sessions match your filters</td></tr>
               ) : sessions.map((s) => (
                 <tr key={s.id} onClick={() => router.push(`/sessions/${s.id}`)}>
                   <td className="font-mono text-xs">{s.source_ip}</td>
@@ -199,6 +217,11 @@ export default function SessionsPage() {
                   <td className="text-xs tabular-nums">{s.ioc_count > 0 ? <span className="text-accent">{s.ioc_count}</span> : "0"}</td>
                   <td className="text-xs text-text-muted">{formatDuration(s.duration_seconds)}</td>
                   <td className="text-xs text-text-muted whitespace-nowrap">{formatDateTime(s.started_at)}</td>
+                  <td>
+                    <span className={TRIAGE_BADGE[s.triage_status] ?? "badge-noise"}>
+                      {(s.triage_status || "new").replace(/_/g, " ")}
+                    </span>
+                  </td>
                   <td className="text-xs">
                     {s.cpu_stop_occurred && <span title="CPU STOP" className="text-severity-critical mr-1">⚡</span>}
                     {s.has_iocs && <span title="Has IOCs" className="text-accent">●</span>}

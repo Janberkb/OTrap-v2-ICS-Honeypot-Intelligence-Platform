@@ -30,6 +30,36 @@ async def top_attackers(
     return {"items": rows}
 
 
+@router.get("/histogram")
+async def events_histogram(
+    hours: int = Query(24, ge=1, le=168),
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict:
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import text as sa_text
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    result = await db.execute(sa_text("""
+        SELECT
+            date_trunc('hour', timestamp::timestamptz) AS bucket,
+            COUNT(*) AS count
+        FROM events
+        WHERE timestamp >= :since
+        GROUP BY bucket
+        ORDER BY bucket
+    """), {"since": since})
+
+    buckets = []
+    for r in result:
+        dt = r.bucket
+        label = dt.strftime("%H:%M") if hasattr(dt, "strftime") else str(r.bucket)[:16]
+        buckets.append({"hour": label, "count": int(r.count)})
+
+    return {"buckets": buckets, "hours": hours}
+
+
 def _ev(e: models.Event) -> dict:
     return {
         "id":            str(e.id),

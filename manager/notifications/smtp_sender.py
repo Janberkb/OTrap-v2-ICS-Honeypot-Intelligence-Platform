@@ -51,6 +51,49 @@ async def maybe_send_smtp(db, ev: dict, session: models.Session) -> None:
         logger.error("SMTP send failed", exc_info=True)
 
 
+def send_reset_email(cfg: "models.SMTPConfig", user: "models.User", token: str) -> None:
+    """Send a password reset link to the user's email address."""
+    import os
+    base_url = os.environ.get("PUBLIC_URL", "http://localhost:3000")
+    reset_url = f"{base_url}/reset-password?token={token}"
+
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;background:#f5f5f5;padding:20px;">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:600px;margin:0 auto;">
+      <h2 style="color:#2563eb;">OTrap — Password Reset</h2>
+      <p>Hi <strong>{user.username}</strong>,</p>
+      <p>Click the button below to reset your password. This link expires in <strong>1 hour</strong>.</p>
+      <p style="margin:24px 0;">
+        <a href="{reset_url}" style="background:#2563eb;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">
+          Reset Password
+        </a>
+      </p>
+      <p style="font-size:12px;color:#999;">If you did not request a password reset, ignore this email.</p>
+      <p style="font-size:12px;color:#999;">Link: {reset_url}</p>
+    </div></body></html>
+    """
+    password = decrypt_secret(cfg.password_enc) if cfg.password_enc else None
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "[OTrap] Password Reset Request"
+    msg["From"]    = cfg.from_address
+    msg["To"]      = user.email
+    msg.attach(MIMEText(html, "html"))
+
+    if cfg.use_tls and not cfg.use_starttls:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP_SSL(cfg.host, cfg.port, context=ctx) as srv:
+            if password:
+                srv.login(cfg.username, password)
+            srv.sendmail(cfg.from_address, [user.email], msg.as_string())
+    else:
+        with smtplib.SMTP(cfg.host, cfg.port) as srv:
+            if cfg.use_starttls:
+                srv.starttls()
+            if password:
+                srv.login(cfg.username, password)
+            srv.sendmail(cfg.from_address, [user.email], msg.as_string())
+
+
 def _send_alert_email(
     cfg: models.SMTPConfig, password: str | None,
     ev: dict, session: models.Session,

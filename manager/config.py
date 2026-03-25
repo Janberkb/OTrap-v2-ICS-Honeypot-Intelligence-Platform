@@ -52,10 +52,13 @@ class Settings(BaseSettings):
     sensor_public_manager_addr: str = "127.0.0.1:9443"
     sensor_image_ref: str = "ghcr.io/otrap/sensor:latest"
     sensor_repo_url: str = "https://github.com/Janberkb/OTrap-v2-ICS-Honeypot-Intelligence-Platform.git"
+    installer_base_url_override: str = ""
 
     @property
     def installer_base_url(self) -> str:
-        """HTTP URL for the manager API, derived from sensor_public_manager_addr."""
+        """HTTP URL for the manager API used in installer curl commands."""
+        if self.installer_base_url_override:
+            return self.installer_base_url_override.rstrip("/")
         try:
             host, _ = self.sensor_public_manager_addr.rsplit(":", 1)
             return f"http://{host}:{self.management_port}"

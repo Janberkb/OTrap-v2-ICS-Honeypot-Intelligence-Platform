@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/brand-mark";
 import {
   LayoutDashboard, Shield, Activity, Radio,
   Settings, LogOut, Users, Database, FileText,
-  WifiOff
+  WifiOff, KeyRound, X
 } from "lucide-react";
 
 // ─── Live Stream Context ────────────────────────────────────────────────────
@@ -92,10 +92,15 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const router   = useRouter();
 
-  const [user,      setUser]      = useState<any>(null);
-  const [events,    setEvents]    = useState<LiveEvent[]>([]);
-  const [stats,     setStats]     = useState<StatsData | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [user,        setUser]        = useState<any>(null);
+  const [events,      setEvents]      = useState<LiveEvent[]>([]);
+  const [stats,       setStats]       = useState<StatsData | null>(null);
+  const [connected,   setConnected]   = useState(false);
+  const [showChgPw,   setShowChgPw]   = useState(false);
+  const [chgPwForm,   setChgPwForm]   = useState({ current: "", next: "", confirm: "" });
+  const [chgPwError,  setChgPwError]  = useState("");
+  const [chgPwOk,     setChgPwOk]     = useState(false);
+  const [chgPwLoading,setChgPwLoading]= useState(false);
 
   function isPathActive({ href, exact, aliases = [] }: NavItem): boolean {
     const candidates = [href, ...aliases];
@@ -162,6 +167,40 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
     connect();
     return () => { es?.close(); clearTimeout(retryTimer); };
   }, []);
+
+  async function handleChangePassword() {
+    setChgPwError(""); setChgPwOk(false);
+    if (chgPwForm.next !== chgPwForm.confirm) {
+      setChgPwError("New passwords do not match"); return;
+    }
+    if (chgPwForm.next.length < 12) {
+      setChgPwError("New password must be at least 12 characters"); return;
+    }
+    setChgPwLoading(true);
+    const csrf = document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
+    // Step 1: reauth
+    const ra = await fetch(apiPath("/auth/reauth"), {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+      body: JSON.stringify({ password: chgPwForm.current }),
+    });
+    if (!ra.ok) { setChgPwError("Current password is incorrect"); setChgPwLoading(false); return; }
+    // Step 2: change password
+    const cp = await fetch(apiPath("/auth/change-password"), {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+      body: JSON.stringify({ current_password: chgPwForm.current, new_password: chgPwForm.next }),
+    });
+    setChgPwLoading(false);
+    if (!cp.ok) {
+      const d = await cp.json();
+      setChgPwError(d.detail?.message ?? d.detail?.error ?? "Failed to change password");
+      return;
+    }
+    setChgPwOk(true);
+    setChgPwForm({ current: "", next: "", confirm: "" });
+    setTimeout(() => { setShowChgPw(false); setChgPwOk(false); }, 1500);
+  }
 
   async function handleLogout() {
     const csrf = document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
@@ -246,6 +285,11 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
               <p className="text-xs font-medium text-text-primary truncate">{user?.username}</p>
               <p className="text-xs text-text-faint capitalize">{user?.role}</p>
             </div>
+            <button onClick={() => { setShowChgPw(true); setChgPwError(""); setChgPwOk(false); }}
+              className="nav-item w-full mt-1 text-text-faint hover:text-accent">
+              <KeyRound className="w-4 h-4" />
+              <span>Change Password</span>
+            </button>
             <button onClick={handleLogout}
               className="nav-item w-full mt-1 text-text-faint hover:text-severity-critical">
               <LogOut className="w-4 h-4" />
@@ -259,6 +303,52 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
           {children}
         </main>
       </div>
+      {/* Change Password Modal */}
+      {showChgPw && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-bg-surface border border-bg-border rounded-xl p-6 w-full max-w-sm shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-semibold text-sm text-text-primary flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-accent" />Change Password
+              </h2>
+              <button onClick={() => setShowChgPw(false)} className="text-text-faint hover:text-text-primary">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {chgPwOk ? (
+              <p className="text-sm text-severity-low text-center py-4">Password changed successfully.</p>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-text-muted block mb-1">Current Password</label>
+                  <input type="password" className="input w-full" value={chgPwForm.current}
+                    onChange={(e) => setChgPwForm({ ...chgPwForm, current: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-text-muted block mb-1">New Password <span className="text-text-faint">(min 12 chars)</span></label>
+                  <input type="password" className="input w-full" value={chgPwForm.next}
+                    onChange={(e) => setChgPwForm({ ...chgPwForm, next: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-text-muted block mb-1">Confirm New Password</label>
+                  <input type="password" className="input w-full" value={chgPwForm.confirm}
+                    onChange={(e) => setChgPwForm({ ...chgPwForm, confirm: e.target.value })} />
+                </div>
+                {chgPwError && <p className="text-xs text-severity-critical">{chgPwError}</p>}
+                <div className="flex gap-2 pt-1">
+                  <button onClick={handleChangePassword} disabled={chgPwLoading}
+                    className="btn-primary flex-1 text-sm disabled:opacity-50">
+                    {chgPwLoading ? "Saving…" : "Save"}
+                  </button>
+                  <button onClick={() => setShowChgPw(false)} className="btn-secondary text-sm px-4">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </StreamContext.Provider>
   );
 }

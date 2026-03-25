@@ -102,12 +102,21 @@ def missing(value: str | None) -> bool:
     value = value.strip()
     return value == "" or "CHANGE_ME" in value
 
+def get_outbound_ip() -> str:
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return ""
+
 defaults = {
     "SESSION_SECURE": "false",
     "CORS_ORIGINS": "http://localhost:3000",
-    "MANAGEMENT_HOST": "127.0.0.1",
-    "UI_HOST": "127.0.0.1",
-    "GRPC_HOST": "127.0.0.1",
+    "MANAGEMENT_HOST": "0.0.0.0",
+    "UI_HOST": "0.0.0.0",
+    "GRPC_HOST": "0.0.0.0",
     "SENSOR_INSECURE_JOIN": "true",
     "NEXT_PUBLIC_API_URL": "http://localhost:8080",
     "SENSOR_IMAGE_REF": "ghcr.io/otrap/sensor:latest",
@@ -118,10 +127,16 @@ for key, value in defaults.items():
         data[key] = value
 
 if missing(data.get("SENSOR_PUBLIC_MANAGER_ADDR")):
-    public_host = data["GRPC_HOST"]
-    if public_host in {"0.0.0.0", "::", "*"}:
-        public_host = "127.0.0.1"
+    detected_ip = get_outbound_ip()
+    public_host = detected_ip if detected_ip and not detected_ip.startswith("127.") else "127.0.0.1"
     data["SENSOR_PUBLIC_MANAGER_ADDR"] = f"{public_host}:9443"
+
+if missing(data.get("INSTALLER_BASE_URL_OVERRIDE")):
+    try:
+        public_host = data["SENSOR_PUBLIC_MANAGER_ADDR"].rsplit(":", 1)[0]
+    except Exception:
+        public_host = "127.0.0.1"
+    data["INSTALLER_BASE_URL_OVERRIDE"] = f"http://{public_host}:8080"
 
 generated = {}
 generators = {
@@ -157,6 +172,7 @@ append_order = [
     "UI_HOST",
     "GRPC_HOST",
     "SENSOR_PUBLIC_MANAGER_ADDR",
+    "INSTALLER_BASE_URL_OVERRIDE",
     "SENSOR_IMAGE_REF",
 ]
 for key in append_order:
@@ -168,8 +184,9 @@ summary_path.write_text(json.dumps({
     "generated": generated,
     "admin_user": data.get("INITIAL_ADMIN_USERNAME", "admin"),
     "admin_password": data.get("INITIAL_ADMIN_PASSWORD", ""),
-    "grpc_host": data.get("GRPC_HOST", "127.0.0.1"),
+    "grpc_host": data.get("GRPC_HOST", "0.0.0.0"),
     "public_manager_addr": data.get("SENSOR_PUBLIC_MANAGER_ADDR", ""),
+    "installer_base_url": data.get("INSTALLER_BASE_URL_OVERRIDE", ""),
 }), encoding="utf-8")
 PY
 }
@@ -328,17 +345,24 @@ print(json.loads(pathlib.Path(sys.argv[1]).read_text())["admin_password"])
 PY
 )"
 
-  local public_addr
+  local public_addr installer_url
   public_addr="$(python3 - "$summary_file" <<'PY'
-import json
-import pathlib
-import sys
+import json, pathlib, sys
 print(json.loads(pathlib.Path(sys.argv[1]).read_text())["public_manager_addr"])
 PY
 )"
+  installer_url="$(python3 - "$summary_file" <<'PY'
+import json, pathlib, sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text()).get("installer_base_url", ""))
+PY
+)"
+  if [[ -n "$installer_url" ]] && ! [[ "$installer_url" =~ ://localhost|://127\. ]]; then
+    echo "  Sensor installer: ${installer_url}/api/v1/sensors/install/<sensor-id>"
+    echo "  (Generate a token from the UI → copy the curl command → run on the target host)"
+  fi
   if [[ "$public_addr" =~ ^(127\.0\.0\.1|localhost): ]]; then
     warn "SENSOR_PUBLIC_MANAGER_ADDR is set to loopback (${public_addr})."
-    warn "Remote sensors on other hosts will not reach this Manager until you set GRPC_HOST and SENSOR_PUBLIC_MANAGER_ADDR to the management server IP."
+    warn "Remote sensors cannot reach this Manager. Edit GRPC_HOST=0.0.0.0 and SENSOR_PUBLIC_MANAGER_ADDR=<this-server-ip>:9443 in .env, then re-run make install-manager."
   elif [[ "$public_addr" =~ ^(0\.0\.0\.0|\[::\]|::): ]]; then
     warn "SENSOR_PUBLIC_MANAGER_ADDR is set to a wildcard host (${public_addr})."
     warn "Change it to the management server IP or DNS name before generating remote sensor commands."

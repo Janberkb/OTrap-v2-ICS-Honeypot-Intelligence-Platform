@@ -11,12 +11,17 @@ type Tab = "timeline" | "iocs" | "artifacts" | "mitre";
 export default function SessionDetailPage() {
   const { id }   = useParams<{ id: string }>();
   const router   = useRouter();
-  const [session,   setSession]   = useState<any>(null);
-  const [timeline,  setTimeline]  = useState<any[]>([]);
-  const [iocs,      setIocs]      = useState<any[]>([]);
-  const [artifacts, setArtifacts] = useState<any[]>([]);
-  const [tab,       setTab]       = useState<Tab>("timeline");
-  const [loading,   setLoading]   = useState(true);
+  const [session,      setSession]      = useState<any>(null);
+  const [timeline,     setTimeline]     = useState<any[]>([]);
+  const [iocs,         setIocs]         = useState<any[]>([]);
+  const [artifacts,    setArtifacts]    = useState<any[]>([]);
+  const [tab,          setTab]          = useState<Tab>("timeline");
+  const [loading,      setLoading]      = useState(true);
+  const [expanded,     setExpanded]     = useState<Set<number>>(new Set());
+  const [triageStatus, setTriageStatus] = useState("new");
+  const [triageNote,   setTriageNote]   = useState("");
+  const [triageSaving, setTriageSaving] = useState(false);
+  const [triageSaved,  setTriageSaved]  = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -30,8 +35,25 @@ export default function SessionDetailPage() {
       setTimeline(tl.timeline ?? []);
       setIocs(iocData.items ?? []);
       setArtifacts(artData.items ?? []);
+      setTriageStatus(sess.triage_status || "new");
+      setTriageNote(sess.triage_note || "");
     }).finally(() => setLoading(false));
   }, [id]);
+
+  function getCsrf() {
+    return document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
+  }
+
+  async function saveTriage() {
+    setTriageSaving(true);
+    const r = await fetch(apiPath(`/sessions/${id}/triage`), {
+      method: "PATCH", credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": getCsrf() },
+      body: JSON.stringify({ triage_status: triageStatus, triage_note: triageNote }),
+    });
+    if (r.ok) { setTriageSaved(true); setTimeout(() => setTriageSaved(false), 2000); }
+    setTriageSaving(false);
+  }
 
   if (loading) return <div className="flex items-center justify-center h-64 text-text-muted">Loading session…</div>;
   if (!session) return <div className="p-6 text-severity-high">Session not found</div>;
@@ -68,18 +90,53 @@ export default function SessionDetailPage() {
       {/* Meta cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
         {[
-          { label: "Protocol",   value: session.primary_protocol?.toUpperCase() },
-          { label: "Phase",      value: session.attack_phase?.replace(/_/g, " ") },
-          { label: "Events",     value: session.event_count },
-          { label: "IOCs",       value: session.ioc_count },
-          { label: "Duration",   value: formatDuration(session.duration_seconds) },
-          { label: "Started",    value: formatDateTime(session.started_at) },
+          { label: "Protocol",    value: session.primary_protocol?.toUpperCase() },
+          { label: "Phase",       value: session.attack_phase?.replace(/_/g, " ") },
+          { label: "Events",      value: session.event_count },
+          { label: "IOCs",        value: iocs.length },
+          { label: "Duration",    value: formatDuration(session.duration_seconds) },
+          { label: "Started",     value: formatDateTime(session.started_at) },
+          { label: "Closed",      value: session.closed_at ? formatDateTime(session.closed_at) : "Active" },
+          ...(session.source_port ? [{ label: "Src Port", value: String(session.source_port) }] : []),
+          ...(session.sensor_id   ? [{ label: "Sensor",   value: session.sensor_id.slice(0, 8) + "…" }] : []),
         ].map(({ label, value }) => (
           <div key={label} className="kpi-card">
             <span className="kpi-label">{label}</span>
             <span className="text-sm font-semibold text-text-primary mt-0.5">{value ?? "—"}</span>
           </div>
         ))}
+      </div>
+
+      {/* Triage panel */}
+      <div className="card p-3 flex items-center gap-3 flex-wrap">
+        <Shield className="w-4 h-4 text-text-muted flex-shrink-0" />
+        <span className="text-xs font-semibold text-text-faint uppercase">Triage</span>
+        <select
+          className="input text-sm py-1 w-40"
+          value={triageStatus}
+          onChange={(e) => setTriageStatus(e.target.value)}
+        >
+          <option value="new">new</option>
+          <option value="investigating">investigating</option>
+          <option value="reviewed">reviewed</option>
+          <option value="false_positive">false positive</option>
+          <option value="escalated">escalated</option>
+        </select>
+        <input
+          type="text"
+          className="input text-sm py-1 flex-1 min-w-48"
+          placeholder="Note (optional)"
+          maxLength={500}
+          value={triageNote}
+          onChange={(e) => setTriageNote(e.target.value)}
+        />
+        <button
+          onClick={saveTriage}
+          disabled={triageSaving}
+          className="btn-primary text-xs px-4 py-1.5 flex-shrink-0"
+        >
+          {triageSaved ? "Saved ✓" : triageSaving ? "Saving…" : "Save"}
+        </button>
       </div>
 
       {/* Tabs */}
@@ -119,22 +176,39 @@ export default function SessionDetailPage() {
                       }`}>
                         <Activity className="w-3.5 h-3.5 text-text-muted" />
                       </div>
-                      <div className="flex-1 card p-3 hover:bg-bg-elevated transition-colors">
+                      <div className="flex-1 card p-3 hover:bg-bg-elevated transition-colors cursor-pointer"
+                        onClick={() => setExpanded(prev => {
+                          const next = new Set(prev);
+                          next.has(i) ? next.delete(i) : next.add(i);
+                          return next;
+                        })}>
                         <div className="flex items-start justify-between gap-2">
-                          <div>
+                          <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
                               <SeverityBadge severity={ev.severity} />
                               <span className="text-xs font-mono text-text-muted">{ev.event_type}</span>
+                              {ev.dst_port && (
+                                <span className="text-xs font-mono text-text-faint bg-bg-elevated px-1.5 py-0.5 rounded">
+                                  :{ev.dst_port}
+                                </span>
+                              )}
                             </div>
                             <p className="text-sm text-text-primary">{ev.raw_summary}</p>
                             {ev.classification && (
                               <p className="text-xs text-text-faint mt-0.5">{ev.classification}</p>
                             )}
                           </div>
-                          <span className="text-xs text-text-faint whitespace-nowrap font-mono">
+                          <span className="text-xs text-text-faint whitespace-nowrap font-mono ml-2">
                             {formatDateTime(ev.timestamp)}
                           </span>
                         </div>
+                        {expanded.has(i) && ev.metadata && Object.keys(ev.metadata).length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-bg-border">
+                            <pre className="payload-hex text-xs overflow-x-auto whitespace-pre-wrap break-all">
+                              {JSON.stringify(ev.metadata, null, 2)}
+                            </pre>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -200,6 +274,9 @@ export default function SessionDetailPage() {
                   <div>
                     <p className="font-semibold text-sm text-text-primary">{t.technique_name}</p>
                     <p className="text-xs text-text-muted mt-0.5">Tactic: {t.tactic}</p>
+                    {t.description && (
+                      <p className="text-xs text-text-faint mt-1.5 leading-relaxed">{t.description}</p>
+                    )}
                   </div>
                 </div>
               ))}

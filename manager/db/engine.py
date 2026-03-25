@@ -34,8 +34,15 @@ def create_engine_and_session_factory(database_url: str):
 async def run_migrations(engine) -> None:
     """Create all tables from ORM models (Alembic handles incremental migrations in prod)."""
     from manager.db.models import Base
+    from sqlalchemy import text
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Idempotent column additions for existing deployments
+        for stmt in [
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS triage_status TEXT NOT NULL DEFAULT 'new'",
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS triage_note TEXT",
+        ]:
+            await conn.execute(text(stmt))
 
 
 @asynccontextmanager

@@ -6,31 +6,47 @@ from __future__ import annotations
 
 import csv
 import io
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from fastapi import Request
 from manager.db import models
 from manager.db.engine import get_db
 from manager.api.auth import get_current_user
 from manager.security.audit import write_audit
+from manager.analyzer.mitre_ics import MITRE_ICS_MAPPING
+
+# technique_id → description (first match wins when multiple events share a technique)
+_MITRE_DESC: dict[str, str] = {}
+for _entry in MITRE_ICS_MAPPING.values():
+    _tid = _entry.get("technique_id", "")
+    if _tid and _tid not in _MITRE_DESC:
+        _MITRE_DESC[_tid] = _entry.get("description", "")
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+_VALID_TRIAGE = {"new", "investigating", "reviewed", "false_positive", "escalated"}
+
+
+class TriageRequest(BaseModel):
+    triage_status: str
+    triage_note: str | None = None
 
 
 @router.get("")
 async def list_sessions(
-    severity:     str | None = Query(None),
-    signal_tier:  str | None = Query(None),
-    protocol:     str | None = Query(None),
-    source_ip:    str | None = Query(None),
-    cpu_stop:     bool | None = Query(None),
-    has_iocs:     bool | None = Query(None),
+    severity:      str | None = Query(None),
+    signal_tier:   str | None = Query(None),
+    protocol:      str | None = Query(None),
+    source_ip:     str | None = Query(None),
+    cpu_stop:      bool | None = Query(None),
+    has_iocs:      bool | None = Query(None),
     is_actionable: bool | None = Query(None),
-    from_dt:      str | None = Query(None),
-    to_dt:        str | None = Query(None),
-    limit:        int = Query(100, ge=1, le=1000),
-    offset:       int = Query(0, ge=0),
+    from_dt:       str | None = Query(None),
+    to_dt:         str | None = Query(None),
+    triage_status: str | None = Query(None),
+    limit:         int = Query(100, ge=1, le=1000),
+    offset:        int = Query(0, ge=0),
     db=Depends(get_db),
     user=Depends(get_current_user),
 ) -> dict:
@@ -41,6 +57,7 @@ async def list_sessions(
         cpu_stop=cpu_stop, has_iocs=has_iocs,
         is_actionable=is_actionable,
         from_dt=from_dt, to_dt=to_dt,
+        triage_status=triage_status,
         limit=limit, offset=offset,
     )
     return {
@@ -48,6 +65,46 @@ async def list_sessions(
         "offset": offset,
         "limit":  limit,
         "items":  [_session_summary(s) for s in sessions],
+    }
+
+
+@router.get("/stats")
+async def sessions_stats(
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict:
+    from datetime import date, datetime, timezone, timedelta
+    from sqlalchemy import text as sa_text
+
+    today   = date.today().isoformat()          # "2026-03-25"
+    ago_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+    proto_rows = await db.execute(sa_text("""
+        SELECT primary_protocol, COUNT(*) AS count
+        FROM sessions
+        GROUP BY primary_protocol
+        ORDER BY count DESC
+        LIMIT 10
+    """))
+    protocols = [
+        {"protocol": r.primary_protocol or "unknown", "count": int(r.count)}
+        for r in proto_rows
+    ]
+
+    sessions_today = (await db.execute(
+        sa_text("SELECT COUNT(*) FROM sessions WHERE started_at >= :today"),
+        {"today": today},
+    )).scalar_one()
+
+    unique_ips = (await db.execute(
+        sa_text("SELECT COUNT(DISTINCT source_ip) FROM events WHERE timestamp >= :ago"),
+        {"ago": ago_24h},
+    )).scalar_one()
+
+    return {
+        "protocols":      protocols,
+        "sessions_today": int(sessions_today),
+        "unique_ips_24h": int(unique_ips),
     }
 
 
@@ -97,6 +154,32 @@ async def get_session(
         s = result.scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail={"error": "NOT_FOUND"})
+    return _session_detail(s)
+
+
+@router.patch("/{session_id}/triage")
+async def triage_session(
+    session_id: str,
+    payload: TriageRequest,
+    request: Request,
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict:
+    if payload.triage_status not in _VALID_TRIAGE:
+        raise HTTPException(status_code=400, detail={"error": "INVALID_TRIAGE_STATUS"})
+    from sqlalchemy import select
+    result = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    s = result.scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail={"error": "NOT_FOUND"})
+    s.triage_status = payload.triage_status
+    if payload.triage_note is not None:
+        s.triage_note = payload.triage_note[:500]
+    await db.commit()
+    await write_audit(db, user, "triage_session",
+                      target_type="session", target_id=session_id,
+                      detail={"triage_status": payload.triage_status},
+                      source_ip=request.client.host if request.client else None)
     return _session_detail(s)
 
 
@@ -167,6 +250,7 @@ async def get_session_timeline(
                 "classification": e.classification,
                 "raw_summary":   e.raw_summary,
                 "dst_port":      e.dst_port,
+                "metadata":      e.event_metadata or {},
             }
             for e in events
         ],
@@ -192,17 +276,22 @@ def _session_summary(s: models.Session) -> dict:
         "duration_seconds":   s.duration_seconds,
         "started_at":         s.started_at,
         "updated_at":         s.updated_at,
-        "mitre_techniques":   s.mitre_techniques or [],
+        "triage_status":      getattr(s, "triage_status", None) or "new",
+        "mitre_techniques":   [
+            {**t, "description": _MITRE_DESC.get(t.get("technique_id", ""), "")}
+            for t in (s.mitre_techniques or [])
+        ],
     }
 
 
 def _session_detail(s: models.Session) -> dict:
     d = _session_summary(s)
     d.update({
-        "sensor_id":  str(s.sensor_id) if s.sensor_id else None,
-        "source_port": s.source_port,
-        "metadata":    s.session_metadata or {},
-        "closed_at":   s.closed_at,
+        "sensor_id":    str(s.sensor_id) if s.sensor_id else None,
+        "source_port":  s.source_port,
+        "metadata":     s.session_metadata or {},
+        "closed_at":    s.closed_at,
+        "triage_note":  getattr(s, "triage_note", None),
     })
     return d
 

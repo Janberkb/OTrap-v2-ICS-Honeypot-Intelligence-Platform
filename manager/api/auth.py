@@ -109,6 +109,22 @@ class ReauthRequest(BaseModel):
     password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    username: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def pw_strength(cls, v: str) -> str:
+        if len(v) < 12:
+            raise ValueError("Password must be at least 12 characters")
+        return v
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("/login")
@@ -233,6 +249,69 @@ async def reauth(
     await request.app.state.redis.setex(f"reauth:{str(user.id)}", REAUTH_VALID_SEC, "1")
     await write_audit(db, user, "reauth", source_ip=ip)
     return {"ok": True, "valid_for_seconds": REAUTH_VALID_SEC}
+
+
+PW_RESET_TTL = 3600  # 1 hour
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    db=Depends(get_db),
+) -> dict:
+    """
+    If SMTP is configured: generate a reset token and email it to the user.
+    If SMTP is not configured: return smtp_required so the UI can show
+    'contact your administrator'.
+    Always returns the same envelope so as not to reveal whether the account exists.
+    """
+    from manager.db import models as m
+    cfg = await m.SMTPConfig.get(db)
+    smtp_ok = bool(cfg and cfg.enabled and cfg.host)
+
+    if not smtp_ok:
+        return {"smtp_required": True}
+
+    user = await m.User.get_by_username(db, payload.username)
+    if user and user.is_active and user.email:
+        token = secrets.token_urlsafe(32)
+        redis = request.app.state.redis
+        await redis.setex(f"pw_reset:{token}", PW_RESET_TTL, str(user.id))
+        try:
+            from manager.notifications.smtp_sender import send_reset_email
+            send_reset_email(cfg, user, token)
+        except Exception:
+            pass  # Don't leak send errors
+
+    # Always return the same message
+    return {"ok": True}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    db=Depends(get_db),
+) -> dict:
+    redis = request.app.state.redis
+    key   = f"pw_reset:{payload.token}"
+    user_id = await redis.get(key)
+    if not user_id:
+        raise HTTPException(status_code=400, detail={"error": "INVALID_TOKEN", "message": "Reset link is invalid or has expired"})
+
+    user = await models.User.get_by_id(db, user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail={"error": "INVALID_TOKEN"})
+
+    user.password_hash  = hash_bcrypt(payload.new_password)
+    user.force_pw_reset = False
+    user.updated_at     = datetime.now(timezone.utc).isoformat()
+    await db.commit()
+    await redis.delete(key)
+
+    await write_audit(db, user, "reset_password")
+    return {"ok": True}
 
 
 @router.post("/change-password")

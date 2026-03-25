@@ -15,12 +15,20 @@ router = APIRouter(prefix="/audit", tags=["admin-audit"])
 
 @router.get("")
 async def get_audit_log(
-    limit:  int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    limit:    int = Query(100, ge=1, le=1000),
+    offset:   int = Query(0, ge=0),
+    username: str | None = Query(None),
+    action:   str | None = Query(None),
+    from_dt:  str | None = Query(None),
+    to_dt:    str | None = Query(None),
     db=Depends(get_db),
     user=Depends(require_admin),
 ) -> dict:
-    logs = await models.AuditLog.list_recent(db, limit=limit, offset=offset)
+    logs = await models.AuditLog.list_recent(
+        db, limit=limit, offset=offset,
+        username=username, action=action,
+        from_dt=from_dt, to_dt=to_dt,
+    )
     return {"items": [
         {
             "id":          str(l.id),

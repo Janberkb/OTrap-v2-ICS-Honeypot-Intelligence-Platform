@@ -221,6 +221,16 @@ export default function AdminUsersPage() {
                             <option value="superadmin">Superadmin</option>
                           </select>
                         </div>
+                        <div>
+                          <label className="text-xs text-text-muted block mb-1">New Password <span className="text-text-faint">(leave blank to keep)</span></label>
+                          <input
+                            className="input text-sm w-56"
+                            type="password"
+                            placeholder="min 12 characters"
+                            value={editForm.new_password}
+                            onChange={(e) => setEditForm({ ...editForm, new_password: e.target.value })}
+                          />
+                        </div>
                         <div className="flex gap-2">
                           <button onClick={saveEdit} className="btn-primary text-xs px-3 py-1.5">Save</button>
                           <button onClick={() => setEditTarget(null)} className="btn-secondary text-xs px-3 py-1.5">Cancel</button>

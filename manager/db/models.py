@@ -143,6 +143,8 @@ class Session(Base):
     started_at        = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at        = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     closed_at         = Column(Text, nullable=True)
+    triage_status     = Column(Text, nullable=False, default="new", server_default="new")
+    triage_note       = Column(Text, nullable=True)
 
     events    = relationship("Event", back_populates="session", lazy="noload")
     iocs      = relationship("IOC", back_populates="session", lazy="noload")
@@ -191,6 +193,7 @@ class Session(Base):
         is_actionable: bool | None = None,
         from_dt: str | None = None,
         to_dt: str | None = None,
+        triage_status: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list["Session"], int]:
@@ -213,6 +216,8 @@ class Session(Base):
             q = q.where(cls.started_at >= from_dt)
         if to_dt:
             q = q.where(cls.started_at <= to_dt)
+        if triage_status:
+            q = q.where(cls.triage_status == triage_status)
 
         count_q = select(func.count()).select_from(q.subquery())
         total   = (await session.execute(count_q)).scalar_one()
@@ -569,10 +574,21 @@ class AuditLog(Base):
         ))
 
     @classmethod
-    async def list_recent(cls, db: AsyncSession, limit: int = 100, offset: int = 0) -> list["AuditLog"]:
-        result = await db.execute(
-            select(cls).order_by(cls.timestamp.desc()).limit(limit).offset(offset)
-        )
+    async def list_recent(
+        cls, db: AsyncSession, limit: int = 100, offset: int = 0,
+        username: str | None = None, action: str | None = None,
+        from_dt: str | None = None, to_dt: str | None = None,
+    ) -> list["AuditLog"]:
+        q = select(cls)
+        if username:
+            q = q.where(cls.username.ilike(f"%{username}%"))
+        if action:
+            q = q.where(cls.action == action)
+        if from_dt:
+            q = q.where(cls.timestamp >= from_dt)
+        if to_dt:
+            q = q.where(cls.timestamp <= to_dt + "T23:59:59")
+        result = await db.execute(q.order_by(cls.timestamp.desc()).limit(limit).offset(offset))
         return list(result.scalars().all())
 
     @classmethod
