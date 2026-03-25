@@ -1,0 +1,378 @@
+{
+  "common": {
+    "loading":      "Yükleniyor…",
+    "save":         "Değişiklikleri Kaydet",
+    "saving":       "Kaydediliyor…",
+    "cancel":       "İptal",
+    "confirm":      "Onayla",
+    "delete":       "Sil",
+    "edit":         "Düzenle",
+    "create":       "Oluştur",
+    "test":         "Test Et",
+    "refresh":      "Yenile",
+    "export":       "CSV Olarak Dışa Aktar",
+    "copy":         "Kopyala",
+    "copied":       "Kopyalandı!",
+    "yes":          "Evet",
+    "no":           "Hayır",
+    "all":          "Tümü",
+    "none":         "Yok",
+    "unknown":      "Bilinmiyor",
+    "notFound":     "Bulunamadı",
+    "error":        "Bir hata oluştu",
+    "noData":       "Veri yok",
+    "previous":     "Önceki",
+    "next":         "Sonraki",
+    "page":         "Sayfa {page}",
+    "showing":      "{total} kayıttan {from}–{to} arası gösteriliyor",
+    "utc":          "UTC",
+    "local":        "Yerel"
+  },
+
+  "nav": {
+    "dashboard":     "Kontrol Paneli",
+    "sessions":      "Oturumlar",
+    "sensors":       "Sensörler",
+    "health":        "Sağlık",
+    "admin":         "Yönetim",
+    "users":         "Kullanıcılar",
+    "notifications": "Bildirimler",
+    "siem":          "SIEM",
+    "auditLog":      "Denetim Günlüğü",
+    "signOut":       "Çıkış Yap",
+    "liveStream":    "Canlı",
+    "reconnecting":  "Yeniden bağlanıyor…"
+  },
+
+  "login": {
+    "title":       "OTrap",
+    "subtitle":    "OT Aldatma Platformu — Operatör Konsolu",
+    "username":    "Kullanıcı Adı",
+    "password":    "Şifre",
+    "signIn":      "Giriş Yap",
+    "signingIn":   "Doğrulanıyor…",
+    "wrongCreds":  "Geçersiz kullanıcı adı veya şifre",
+    "rateLimited": "Çok fazla deneme. 60 saniye sonra tekrar deneyin.",
+    "networkError":"Ağ hatası — bağlantınızı kontrol edin",
+    "csrfMissing": "Güvenlik jetonu eksik — sayfayı yenileyin",
+    "footer":      "OTrap v2.0 · Kurumsal ICS Aldatma Platformu"
+  },
+
+  "dashboard": {
+    "title":          "Operatör Kontrol Paneli",
+    "subtitle":       "OT Aldatma Platformu · Canlı tehdit istihbaratı",
+    "streamConnected":"Canlı akış bağlandı",
+    "streamReconnecting": "Yeniden bağlanıyor…",
+    "buffered":       "{count} olay arabelleğe alındı",
+    "kpi": {
+      "totalSessions":    "Toplam Oturum",
+      "criticalHigh":     "Kritik / Yüksek",
+      "cpuStop":          "CPU STOP Olayları",
+      "events24h":        "Olaylar (24s)"
+    },
+    "liveAttackFeed":  "Canlı Saldırı Akışı",
+    "waiting":         "Olaylar bekleniyor…",
+    "topAttackers":    "En Aktif Saldırganlar",
+    "noData":          "Henüz veri yok",
+    "actionableSessions": "Aksiyon Gerektiren Oturumlar",
+    "none":            "Henüz yok",
+    "table": {
+      "time":      "Zaman",
+      "severity":  "Önem",
+      "sourceIP":  "Kaynak IP",
+      "event":     "Olay",
+      "protocol":  "Protokol"
+    }
+  },
+
+  "sessions": {
+    "title":    "Oturumlar",
+    "subtitle": "Toplam {total} oturum",
+    "filters":  "Filtreler",
+    "clearFilters": "Filtreleri Temizle",
+    "noResults":"Filtrelere uyan oturum bulunamadı",
+    "filter": {
+      "severity":      "Önem Derecesi",
+      "signalTier":    "Sinyal Seviyesi",
+      "protocol":      "Protokol",
+      "sourceIP":      "Kaynak IP",
+      "cpuStop":       "CPU STOP",
+      "hasIOCs":       "IOC İçeriyor",
+      "actionable":    "Aksiyon Gerekli",
+      "fromUTC":       "Başlangıç (UTC)",
+      "toUTC":         "Bitiş (UTC)"
+    },
+    "table": {
+      "sourceIP":   "Kaynak IP",
+      "severity":   "Önem",
+      "signalTier": "Sinyal Seviyesi",
+      "protocol":   "Protokol",
+      "phase":      "Faz",
+      "events":     "Olay",
+      "iocs":       "IOC",
+      "duration":   "Süre",
+      "started":    "Başlangıç",
+      "flags":      "İşaretler"
+    }
+  },
+
+  "sessionDetail": {
+    "sessionId":    "Oturum {id}",
+    "cpuStop":      "CPU STOP",
+    "notFound":     "Oturum bulunamadı",
+    "loading":      "Oturum yükleniyor…",
+    "tabs": {
+      "timeline":  "Zaman Tüneli",
+      "iocs":      "IOC'ler",
+      "artifacts": "Kanıtlar",
+      "mitre":     "MITRE ATT&CK"
+    },
+    "meta": {
+      "protocol":  "Protokol",
+      "phase":     "Faz",
+      "events":    "Olay",
+      "iocs":      "IOC",
+      "duration":  "Süre",
+      "started":   "Başlangıç"
+    },
+    "ioc": {
+      "type":       "Tür",
+      "value":      "Değer",
+      "context":    "Bağlam",
+      "confidence": "Güven",
+      "firstSeen":  "İlk Görülme"
+    },
+    "noTimeline":  "Olay yok",
+    "noIOCs":      "IOC tespit edilmedi",
+    "noArtifacts": "Kanıt yakalanmadı",
+    "noMITRE":     "MITRE tekniği eşleştirilmedi",
+    "tactic":      "Taktik: {tactic}"
+  },
+
+  "health": {
+    "title":    "Platform Sağlığı",
+    "subtitle": "Servis durumu ve sensör kalp atışları",
+    "overall":  "Genel:",
+    "services": {
+      "postgres":   "PostgreSQL 16",
+      "redis":      "Redis 7",
+      "sensors":    "Sensörler",
+      "llm_engine": "LLM Motoru"
+    },
+    "serviceDesc": {
+      "postgres":   "Birincil veri deposu",
+      "redis":      "Yayın/abone + hız sınırlama",
+      "sensors":    "Aktif OT tuzak sensörleri",
+      "llm_engine": "İsteğe bağlı AI analizi"
+    },
+    "noSensors": "Aktif sensör yok. Sensör eklemek için katılım jetonu oluşturun.",
+    "activeSensors": "Aktif Sensörler ({count})",
+    "portCoverage": "Port Kapsamı",
+    "ports": {
+      "102": "S7comm",
+      "502": "Modbus",
+      "80":  "HMI HTTP",
+      "443": "HMI HTTPS"
+    },
+    "fix": "Çözüm: {fix}"
+  },
+
+  "sensors": {
+    "title":    "Sensörler",
+    "subtitle": "Kayıtlı OT tuzak sensörleri",
+    "addSensor":"Sensör Ekle",
+    "generateToken": {
+      "title":       "Katılım Jetonu Oluştur",
+      "placeholder": "Sensör adı (örn. ot-segment-a)",
+      "generate":    "Oluştur",
+      "generating":  "Oluşturuluyor…",
+      "warning":     "Katılım jetonu tek kullanımlık ve 24 saat geçerlidir. Hemen kopyalayın — bir daha gösterilmeyecektir."
+    },
+    "tokenGenerated": {
+      "title":    "Jeton Oluşturuldu — Hemen Kopyalayın",
+      "body":     "Bu jeton bir daha gösterilmeyecek. Sensörünüzde SENSOR_JOIN_TOKEN olarak ayarlayın.",
+      "envHint":  "SENSOR_JOIN_TOKEN",
+      "expires":  "Son geçerlilik: {date}"
+    },
+    "noSensors": {
+      "title":    "Kayıtlı sensör yok",
+      "subtitle": "İlk sensörünüzü eklemek için katılım jetonu oluşturun"
+    },
+    "table": {
+      "status":       "Durum",
+      "name":         "Ad",
+      "ip":           "IP",
+      "version":      "Sürüm",
+      "capabilities": "Yetenekler",
+      "lastSeen":     "Son Görülme"
+    },
+    "revoke": "Sensörü İptal Et",
+    "portCoverage": "Port Kapsamı"
+  },
+
+  "reauth": {
+    "title":       "Yeniden Kimlik Doğrulama Gerekli",
+    "body":        "Bu işlem şifrenizi onaylamanızı gerektirmektedir.",
+    "placeholder": "Mevcut Şifre",
+    "confirm":     "Onayla",
+    "confirming":  "Doğrulanıyor…",
+    "cancel":      "İptal",
+    "wrongPassword":"Şifre hatalı"
+  },
+
+  "admin": {
+    "title":   "Yönetim Konsolu",
+    "subtitle":"Sistem yönetimi ve yapılandırma",
+    "platformStatus": "Platform Durumu",
+    "quickLinks": {
+      "users":         "Kullanıcılar",
+      "usersDesc":     "{count} hesap",
+      "notifications": "Bildirimler",
+      "notificationsDesc": "SMTP uyarıları",
+      "siem":          "SIEM",
+      "siemDesc":      "Splunk / Webhook",
+      "auditLog":      "Denetim Günlüğü",
+      "auditLogDesc":  "Tüm yönetim işlemleri",
+      "sensors":       "Sensörler",
+      "sensorsDesc":   "Tuzak sensör kaydı",
+      "health":        "Sağlık",
+      "healthDesc":    "Platform durumu"
+    }
+  },
+
+  "users": {
+    "title":    "Kullanıcı Yönetimi",
+    "subtitle": "{count} kullanıcı",
+    "newUser":  "Yeni Kullanıcı",
+    "createForm": {
+      "title":    "Yeni Kullanıcı Oluştur",
+      "username": "Kullanıcı Adı",
+      "email":    "E-posta",
+      "password": "Şifre (min. 12 karakter)",
+      "role":     "Rol",
+      "roles": {
+        "user":       "Kullanıcı (Operatör)",
+        "superadmin": "Süper Yönetici"
+      }
+    },
+    "table": {
+      "user":       "Kullanıcı",
+      "role":       "Rol",
+      "status":     "Durum",
+      "lastLogin":  "Son Giriş",
+      "created":    "Oluşturulma"
+    },
+    "roles": {
+      "superadmin": "Süper Yönetici",
+      "user":       "Operatör"
+    },
+    "status": {
+      "active":   "Aktif",
+      "disabled": "Devre Dışı"
+    },
+    "errors": {
+      "usernameTaken":    "Bu kullanıcı adı zaten alınmış",
+      "createFailed":     "Kullanıcı oluşturulamadı",
+      "cannotDeleteSelf": "Kendi hesabınızı silemezsiniz"
+    }
+  },
+
+  "notifications": {
+    "title":    "Bildirimler",
+    "subtitle": "SMTP uyarı yapılandırması",
+    "enable":   "E-posta Bildirimlerini Etkinleştir",
+    "enableDesc":"Yüksek önem dereceli olaylar için uyarı gönder",
+    "test":     "Test Et",
+    "testing":  "Gönderiliyor…",
+    "fields": {
+      "host":          "SMTP Sunucusu",
+      "port":          "Port",
+      "username":      "Kullanıcı Adı",
+      "password":      "Şifre",
+      "passwordHint":  "Mevcut şifreyi korumak için boş bırakın",
+      "fromAddress":   "Gönderen Adresi",
+      "toAddresses":   "Alıcı Adresleri (virgülle ayrılmış)",
+      "minSeverity":   "Minimum Önem Derecesi",
+      "cooldown":      "Bekleme Süresi (saniye)"
+    },
+    "options": {
+      "useTLS":       "TLS Kullan (SMTP_SSL)",
+      "useSTARTTLS":  "STARTTLS Kullan",
+      "healthAlerts": "Sağlık Eşiği Uyarıları"
+    },
+    "testSuccess": "✓ {message}",
+    "testFailed":  "✗ {message}"
+  },
+
+  "siem": {
+    "title":    "SIEM Entegrasyonu",
+    "subtitle": "Splunk HEC ve webhook iletimi",
+    "enable":   "SIEM İletimini Etkinleştir",
+    "test":     "Test İletimi",
+    "testing":  "Gönderiliyor…",
+    "fields": {
+      "type":        "SIEM Türü",
+      "types": {
+        "splunk_hec": "Splunk HEC",
+        "webhook":    "Genel Webhook"
+      },
+      "minSeverity": "Minimum Önem Derecesi",
+      "url":         "Uç Nokta URL'si",
+      "urlHint":     "https://splunk.example.com:8088/services/collector/event",
+      "hecToken":    "HEC Jetonu",
+      "bearerToken": "Taşıyıcı Jeton",
+      "tokenHint":   "Mevcut jetonu korumak için boş bırakın"
+    },
+    "deliveryLog": {
+      "title":      "İletim Günlüğü",
+      "noEntries":  "Henüz iletim yok",
+      "table": {
+        "time":   "Zaman",
+        "type":   "Tür",
+        "status": "Durum",
+        "http":   "HTTP",
+        "error":  "Hata"
+      }
+    }
+  },
+
+  "auditLog": {
+    "title":    "Denetim Günlüğü",
+    "subtitle": "Tüm yönetim işlemlerinin değiştirilemez kaydı",
+    "noEntries":"Denetim kaydı yok",
+    "table": {
+      "time":       "Zaman",
+      "user":       "Kullanıcı",
+      "action":     "İşlem",
+      "target":     "Hedef",
+      "detail":     "Detay",
+      "ip":         "IP"
+    }
+  },
+
+  "severity": {
+    "critical": "Kritik",
+    "high":     "Yüksek",
+    "medium":   "Orta",
+    "low":      "Düşük",
+    "noise":    "Gürültü"
+  },
+
+  "signalTier": {
+    "impact":     "Etki",
+    "suspicious": "Şüpheli",
+    "recon":      "Keşif",
+    "noise":      "Gürültü"
+  },
+
+  "healthStatus": {
+    "healthy":   "Sağlıklı",
+    "degraded":  "Bozulmuş",
+    "unhealthy": "Sağlıksız",
+    "disabled":  "Devre Dışı",
+    "offline":   "Çevrimdışı",
+    "active":    "Aktif",
+    "pending":   "Beklemede",
+    "revoked":   "İptal Edilmiş"
+  }
+}

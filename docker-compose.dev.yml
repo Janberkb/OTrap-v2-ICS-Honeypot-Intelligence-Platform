@@ -1,0 +1,60 @@
+# docker-compose.dev.yml — Development overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Changes vs production:
+#  - Hot-reload for manager (uvicorn --reload)
+#  - DOCS_ENABLED=true for FastAPI /docs
+#  - SESSION_SECURE=false (HTTP is fine in dev)
+#  - SENSOR_INSECURE_JOIN=true (skip server cert verify on first join)
+#  - Postgres and Redis ports exposed for local tooling
+#  - All ports bind to 0.0.0.0
+
+services:
+
+  manager:
+    build:
+      context: ./manager
+      dockerfile: Dockerfile
+    volumes:
+      - ./manager:/app          # Live code mount for hot-reload
+    environment:
+      SESSION_SECURE:      "false"
+      DOCS_ENABLED:        "true"
+      CORS_ORIGINS:        "http://localhost:3000,http://localhost:8080"
+      LOG_LEVEL:           "debug"
+    command: >
+      uvicorn manager.main:app
+      --host 0.0.0.0
+      --port 8080
+      --reload
+      --log-level debug
+    ports:
+      - "0.0.0.0:8080:8080"
+
+  sensor:
+    environment:
+      SENSOR_INSECURE_JOIN: "true"
+      LOG_LEVEL:            "debug"
+
+  postgres:
+    ports:
+      - "0.0.0.0:5432:5432"   # Expose for local psql / DBeaver
+
+  redis:
+    ports:
+      - "0.0.0.0:6379:6379"   # Expose for local redis-cli
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile.dev   # Next.js dev server
+    volumes:
+      - ./ui:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      INTERNAL_API_BASE: "http://manager:8080"
+      NEXT_PUBLIC_API_URL: "http://localhost:8080"
+    ports:
+      - "0.0.0.0:3000:3000"
+    command: ["npm", "run", "dev"]

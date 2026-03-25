@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/janberkb/Downloads/otrap-v2.0/otrap -type d -not -path */.* -not -path */node_modules -not -path */__pycache__)",
+      "Bash(grep -r process.env /home/janberkb/Downloads/otrap-v2.0/otrap/ui --include=*.ts --include=*.tsx)",
+      "Bash(ls /home/janberkb/Downloads/otrap-v2.0/otrap/ui/app/\\\\\\(operator\\\\\\)/sessions/)",
+      "Bash(grep -r console. /home/janberkb/Downloads/otrap-v2.0/otrap/ui/app --include=*.tsx)",
+      "Bash(cat \"/home/janberkb/Downloads/otrap-v2.0/otrap/ui/app/\\(operator\\)/sessions/[id]/page.tsx\")",
+      "Bash(wc -l /home/janberkb/Downloads/otrap-v2.0/otrap/ui/app/\\\\\\(admin\\\\\\)/admin/siem/page.tsx)"
+    ]
+  }
+}

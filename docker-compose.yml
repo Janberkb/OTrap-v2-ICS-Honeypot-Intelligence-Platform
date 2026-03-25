@@ -1,0 +1,180 @@
+services:
+
+  # ── Postgres 16 ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-otrap}
+      POSTGRES_USER:     ${POSTGRES_USER:-otrap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-otrap} -d ${POSTGRES_DB:-otrap}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  # ── Redis 7 ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --requirepass "$$REDIS_PASSWORD" --save 60 1 --loglevel warning
+        fi
+        exec redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          if [ -n "$$REDIS_PASSWORD" ]; then
+            redis-cli -a "$$REDIS_PASSWORD" ping
+          else
+            redis-cli ping
+          fi
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend
+
+  # ── OTrap Manager ───────────────────────────────────────────────────────────
+  manager:
+    build:
+      context: ./manager
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     5432
+      POSTGRES_DB:       ${POSTGRES_DB:-otrap}
+      POSTGRES_USER:     ${POSTGRES_USER:-otrap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      REDIS_URL:         redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      API_SECRET_KEY:    ${API_SECRET_KEY:?API_SECRET_KEY required}
+      ENCRYPTION_KEY:    ${ENCRYPTION_KEY:?ENCRYPTION_KEY required}
+      SESSION_SECURE:    ${SESSION_SECURE:-true}
+      GRPC_HOST:         ${GRPC_HOST:-127.0.0.1}
+      GRPC_PORT:         9443
+      GRPC_CA_KEY_B64:   ${GRPC_CA_KEY_B64:-}
+      GRPC_CA_CERT_B64:  ${GRPC_CA_CERT_B64:-}
+      JOIN_TOKEN_TTL_HOURS: ${JOIN_TOKEN_TTL_HOURS:-24}
+      SENSOR_PUBLIC_MANAGER_ADDR: ${SENSOR_PUBLIC_MANAGER_ADDR:-127.0.0.1:9443}
+      SENSOR_IMAGE_REF:  ${SENSOR_IMAGE_REF:-ghcr.io/otrap/sensor:latest}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-admin}
+      INITIAL_ADMIN_EMAIL:    ${INITIAL_ADMIN_EMAIL:-admin@example.com}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:?INITIAL_ADMIN_PASSWORD required}
+      CORS_ORIGINS:      ${CORS_ORIGINS:-}
+      DOCS_ENABLED:      ${DOCS_ENABLED:-false}
+      LLM_ENABLED:       ${LLM_ENABLED:-false}
+      LLM_ENGINE_URL:    http://llm_engine:8001
+    ports:
+      - "${MANAGEMENT_HOST:-127.0.0.1}:8080:8080"
+      - "${GRPC_HOST:-127.0.0.1}:9443:9443"
+    networks:
+      - backend
+      - management
+    volumes:
+      - manager_logs:/app/logs
+
+  # ── OTrap Sensor ────────────────────────────────────────────────────────────
+  sensor:
+    build:
+      context: ./sensor
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - manager
+    environment:
+      SENSOR_MANAGER_URL:   manager:9443
+      SENSOR_JOIN_TOKEN:    ${SENSOR_JOIN_TOKEN:-}
+      SENSOR_NAME:          ${SENSOR_NAME:-sensor-01}
+      SENSOR_CERT_DIR:      /etc/otrap/sensor/certs
+      SENSOR_CERT_ENC_KEY:  ${SENSOR_CERT_ENC_KEY:-}
+      SENSOR_INSECURE_JOIN: ${SENSOR_INSECURE_JOIN:-false}
+      LOG_LEVEL:            ${LOG_LEVEL:-info}
+    ports:
+      # OT protocol ports — exposed to the OT network
+      - "0.0.0.0:102:102"
+      - "0.0.0.0:502:502"
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      - sensor_certs:/etc/otrap/sensor/certs
+    networks:
+      - backend       # Can reach manager:9443
+      - ot_facing     # Exposed to attacker-facing network
+    # No management ports exposed — gRPC is outbound-only
+    cap_add: []       # No extra capabilities by default
+
+  # ── Management UI (Next.js → Nginx) ─────────────────────────────────────────
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        INTERNAL_API_BASE: ${INTERNAL_API_BASE:-http://manager:8080}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+    restart: unless-stopped
+    depends_on:
+      - manager
+    environment:
+      INTERNAL_API_BASE: ${INTERNAL_API_BASE:-http://manager:8080}
+    ports:
+      - "${UI_HOST:-127.0.0.1}:3000:3000"
+    networks:
+      - management
+
+  # ── LLM Engine (optional) ────────────────────────────────────────────────────
+  llm_engine:
+    image: python:3.12-slim
+    restart: unless-stopped
+    profiles:
+      - llm              # Only starts with: docker compose --profile llm up
+    environment:
+      LLM_BACKEND:   ${LLM_BACKEND:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    expose:
+      - "8001"
+    networks:
+      - backend
+    volumes:
+      - ./llm_engine:/app
+    working_dir: /app
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  backend:
+    driver: bridge
+    internal: true          # No direct internet access
+  management:
+    driver: bridge          # UI + API accessible from operator workstation
+  ot_facing:
+    driver: bridge          # Sensor OT-protocol ports
+
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  redis_data:
+  sensor_certs:
+  manager_logs:

@@ -1,0 +1,43 @@
+# docker-compose.sensor.yml — Advanced/manual standalone sensor deployment.
+#
+# Deploy this file ONLY on the sensor host in your OT network segment.
+# The Manager runs separately on the management network.
+#
+# Prerequisites:
+#   1. Preferred path: generate the one-line docker command from the Manager UI.
+#   2. If you need a manual path, copy the .env.sensor snippet from the same UI.
+#   3. Set SENSOR_JOIN_TOKEN, SENSOR_MANAGER_URL, SENSOR_CERT_ENC_KEY in .env.sensor
+#   3. Ensure the sensor host can reach Manager:9443 (outbound TCP only)
+#
+# Usage:
+#   docker compose -f docker-compose.sensor.yml --env-file .env.sensor up -d
+
+services:
+  sensor:
+    image: ${SENSOR_IMAGE_REF:-ghcr.io/otrap/sensor:latest}
+    # Alternatively build from source:
+    # build:
+    #   context: ./sensor
+    #   dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      SENSOR_MANAGER_URL:  ${SENSOR_MANAGER_URL:?Set SENSOR_MANAGER_URL in .env.sensor}
+      SENSOR_JOIN_TOKEN:   ${SENSOR_JOIN_TOKEN:-}
+      SENSOR_NAME:         ${SENSOR_NAME:-sensor-field-01}
+      SENSOR_CERT_DIR:     /etc/otrap/sensor/certs
+      SENSOR_CERT_ENC_KEY: ${SENSOR_CERT_ENC_KEY:?Set SENSOR_CERT_ENC_KEY in .env.sensor}
+      SENSOR_MANAGER_CA_CERT_PATH: ${SENSOR_MANAGER_CA_CERT_PATH:-}
+      SENSOR_INSECURE_JOIN: ${SENSOR_INSECURE_JOIN:-false}
+      LOG_LEVEL:            ${LOG_LEVEL:-info}
+    volumes:
+      - sensor_certs:/etc/otrap/sensor/certs
+    # No network dependency — sensor connects out to Manager
+    network_mode: host   # Use host networking so the OT-facing protocol ports bind directly on the host
+
+volumes:
+  sensor_certs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/otrap/sensor/certs   # Persistent on host for cert survival

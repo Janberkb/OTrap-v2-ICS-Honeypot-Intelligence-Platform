@@ -1,0 +1,42 @@
+# ── Secrets & local config ────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.sensor
+*.key
+*.pem
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+*.so
+.tools/
+
+# ── Go ────────────────────────────────────────────────────────────────────────
+sensor/bin/
+sensor/*.exe
+
+# ── Node / Next.js ────────────────────────────────────────────────────────────
+ui/node_modules/
+ui/.next/
+ui/out/
+ui/.env.local
+
+# ── Docker volumes / runtime ──────────────────────────────────────────────────
+postgres_data/
+redis_data/
+sensor_certs/
+manager_logs/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp

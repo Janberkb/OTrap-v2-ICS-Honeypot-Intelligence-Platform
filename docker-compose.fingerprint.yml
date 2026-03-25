@@ -1,0 +1,50 @@
+# docker-compose.fingerprint.yml — Privileged sensor mode for OS-level TCP fingerprint hardening.
+#
+# This variant modifies the sensor container to:
+#   - Run with NET_ADMIN capability (for iptables/nftables TCP option manipulation)
+#   - Set TCP window size, TTL, and MSS to match Siemens S7-315 network stack
+#   - Apply nftables rules to shape TCP RST behavior
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.fingerprint.yml up sensor
+#
+# WARNING: Requires the host kernel to support nftables and the container runtime
+# to allow CAP_NET_ADMIN. DO NOT enable in production without validating your
+# container runtime security policy.
+
+services:
+  sensor:
+    environment:
+      FINGERPRINT_HARDENING: "true"
+      # Siemens S7-315 network fingerprint parameters
+      FP_TTL:             "64"        # Linux-style TTL (S7 CPUs run VxWorks, TTL=64)
+      FP_WIN_SIZE:        "8192"      # S7-315 TCP window size
+      FP_MSS:             "1460"      # Standard Ethernet MSS
+      FP_TCP_OPTIONS:     "mss,nop,nop,sackOK"  # Minimal TCP options
+      FP_DF_BIT:          "true"      # Don't Fragment bit set (matches S7)
+    cap_add:
+      - NET_ADMIN           # Required for nftables/iptables manipulation
+      - NET_RAW             # Required for raw socket access (TCP fingerprint shaping)
+    sysctls:
+      # Tune kernel TCP parameters to match S7 behavior
+      net.ipv4.ip_default_ttl:          64
+      net.ipv4.tcp_window_scaling:      0   # S7 PLCs don't use window scaling
+      net.ipv4.tcp_timestamps:          0   # Disable TCP timestamps (S7 doesn't use them)
+      net.ipv4.tcp_sack:               0   # Disable SACK (S7 PLCs don't support it)
+      net.core.rmem_default:           8192
+      net.core.wmem_default:           8192
+
+    # Fingerprint init script runs before the sensor binary
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Apply TCP fingerprint hardening via nftables
+        if [ "$$FINGERPRINT_HARDENING" = "true" ]; then
+          echo "Applying S7 TCP fingerprint hardening..."
+          nft add table inet filter 2>/dev/null || true
+          # Set TCP MSS on outbound connections to match S7-315
+          nft add chain inet filter output { type filter hook output priority 0 \; } 2>/dev/null || true
+          nft add rule inet filter output tcp flags syn tcp option maxseg size set $$FP_MSS 2>/dev/null || true
+          echo "Fingerprint hardening applied (MSS=$$FP_MSS, TTL=$$FP_TTL)"
+        fi
+        exec /sensor --manager $$SENSOR_MANAGER_URL --token $$SENSOR_JOIN_TOKEN --name $$SENSOR_NAME

@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="gear" x1="44" x2="212" y1="36" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFB15D"/>
+      <stop offset="0.45" stop-color="#F18A27"/>
+      <stop offset="1" stop-color="#9F5819"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="67" x2="191" y1="56" y2="188" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7F8FB"/>
+      <stop offset="0.42" stop-color="#D7DDE5"/>
+      <stop offset="1" stop-color="#9BA3AF"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="76" x2="184" y1="68" y2="182" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#242830"/>
+      <stop offset="1" stop-color="#15181D"/>
+    </linearGradient>
+    <filter id="shadow" width="238" height="238" x="9" y="12" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)" transform="translate(128 128)">
+    <g fill="url(#gear)">
+      <rect x="-18" y="-118" width="36" height="30" rx="9"/>
+      <rect x="-18" y="-118" width="36" height="30" rx="9" transform="rotate(45)"/>
+      <rect x="-18" y="-118" width="36" height="30" rx="9" transform="rotate(90)"/>
+      <rect x="-18" y="-118" width="36" height="30" rx="9" transform="rotate(135)"/>
+      <rect x="-18" y="-118" width="36" height="30" rx="9" transform="rotate(180)"/>
+      <rect x="-18" y="-118" width="36" height="30" rx="9" transform="rotate(225)"/>
+      <rect x="-18" y="-118" width="36" height="30" rx="9" transform="rotate(270)"/>
+      <rect x="-18" y="-118" width="36" height="30" rx="9" transform="rotate(315)"/>
+    </g>
+
+    <circle r="96" fill="#F18A271E" stroke="url(#gear)" stroke-width="8"/>
+
+    <path
+      d="M0-80L72-56V6C72 54 42 94 0 120C-42 94-72 54-72 6V-56L0-80Z"
+      fill="url(#shield)"
+      stroke="url(#steel)"
+      stroke-width="10"
+      stroke-linejoin="round"
+    />
+
+    <g opacity="0.9" stroke="#F18A27" stroke-linecap="round" stroke-linejoin="round" stroke-width="5">
+      <path d="M-42 6l14-8 14 8v16l-14 8-14-8V6Z"/>
+      <path d="M-56 30l14-8 14 8v16l-14 8-14-8V30Z"/>
+      <path d="M-28 30l14-8 14 8v16l-14 8-14-8V30Z"/>
+    </g>
+
+    <text
+      x="-10"
+      y="28"
+      fill="#F18A27"
+      font-family="Arial Black, Arial, sans-serif"
+      font-size="100"
+      font-weight="900"
+      text-anchor="middle"
+    >T</text>
+    <text
+      x="38"
+      y="46"
+      fill="url(#steel)"
+      font-family="Arial Black, Arial, sans-serif"
+      font-size="96"
+      font-weight="900"
+      text-anchor="middle"
+    >R</text>
+  </g>
+</svg>

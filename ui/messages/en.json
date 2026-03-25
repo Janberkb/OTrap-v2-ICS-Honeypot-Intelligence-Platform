@@ -1,0 +1,378 @@
+{
+  "common": {
+    "loading":      "Loading…",
+    "save":         "Save Changes",
+    "saving":       "Saving…",
+    "cancel":       "Cancel",
+    "confirm":      "Confirm",
+    "delete":       "Delete",
+    "edit":         "Edit",
+    "create":       "Create",
+    "test":         "Test",
+    "refresh":      "Refresh",
+    "export":       "Export CSV",
+    "copy":         "Copy",
+    "copied":       "Copied!",
+    "yes":          "Yes",
+    "no":           "No",
+    "all":          "All",
+    "none":         "None",
+    "unknown":      "Unknown",
+    "notFound":     "Not found",
+    "error":        "An error occurred",
+    "noData":       "No data",
+    "previous":     "Previous",
+    "next":         "Next",
+    "page":         "Page {page}",
+    "showing":      "Showing {from}–{to} of {total}",
+    "utc":          "UTC",
+    "local":        "Local"
+  },
+
+  "nav": {
+    "dashboard":     "Dashboard",
+    "sessions":      "Sessions",
+    "sensors":       "Sensors",
+    "health":        "Health",
+    "admin":         "Admin",
+    "users":         "Users",
+    "notifications": "Notifications",
+    "siem":          "SIEM",
+    "auditLog":      "Audit Log",
+    "signOut":       "Sign out",
+    "liveStream":    "Live",
+    "reconnecting":  "Reconnecting…"
+  },
+
+  "login": {
+    "title":       "OTrap",
+    "subtitle":    "OT Deception Platform — Operator Console",
+    "username":    "Username",
+    "password":    "Password",
+    "signIn":      "Sign In",
+    "signingIn":   "Authenticating…",
+    "wrongCreds":  "Invalid username or password",
+    "rateLimited": "Too many attempts. Try again in 60 seconds.",
+    "networkError":"Network error — check your connection",
+    "csrfMissing": "Security token missing — reload the page",
+    "footer":      "OTrap v2.0 · Enterprise ICS Deception Platform"
+  },
+
+  "dashboard": {
+    "title":          "Operator Dashboard",
+    "subtitle":       "OT Deception Platform · Live threat intelligence",
+    "streamConnected":"Live stream connected",
+    "streamReconnecting": "Reconnecting…",
+    "buffered":       "{count} events buffered",
+    "kpi": {
+      "totalSessions":    "Total Sessions",
+      "criticalHigh":     "Critical / High",
+      "cpuStop":          "CPU STOP Events",
+      "events24h":        "Events (24h)"
+    },
+    "liveAttackFeed":  "Live Attack Feed",
+    "waiting":         "Waiting for events…",
+    "topAttackers":    "Top Attackers",
+    "noData":          "No data yet",
+    "actionableSessions": "Actionable Sessions",
+    "none":            "None yet",
+    "table": {
+      "time":      "Time",
+      "severity":  "Severity",
+      "sourceIP":  "Source IP",
+      "event":     "Event",
+      "protocol":  "Protocol"
+    }
+  },
+
+  "sessions": {
+    "title":    "Sessions",
+    "subtitle": "{total} total sessions",
+    "filters":  "Filters",
+    "clearFilters": "Clear Filters",
+    "noResults":"No sessions match your filters",
+    "filter": {
+      "severity":      "Severity",
+      "signalTier":    "Signal Tier",
+      "protocol":      "Protocol",
+      "sourceIP":      "Source IP",
+      "cpuStop":       "CPU STOP",
+      "hasIOCs":       "Has IOCs",
+      "actionable":    "Actionable",
+      "fromUTC":       "From (UTC)",
+      "toUTC":         "To (UTC)"
+    },
+    "table": {
+      "sourceIP":   "Source IP",
+      "severity":   "Severity",
+      "signalTier": "Signal Tier",
+      "protocol":   "Protocol",
+      "phase":      "Phase",
+      "events":     "Events",
+      "iocs":       "IOCs",
+      "duration":   "Duration",
+      "started":    "Started",
+      "flags":      "Flags"
+    }
+  },
+
+  "sessionDetail": {
+    "sessionId":    "Session {id}",
+    "cpuStop":      "CPU STOP",
+    "notFound":     "Session not found",
+    "loading":      "Loading session…",
+    "tabs": {
+      "timeline":  "Timeline",
+      "iocs":      "IOCs",
+      "artifacts": "Artifacts",
+      "mitre":     "MITRE ATT&CK"
+    },
+    "meta": {
+      "protocol":  "Protocol",
+      "phase":     "Phase",
+      "events":    "Events",
+      "iocs":      "IOCs",
+      "duration":  "Duration",
+      "started":   "Started"
+    },
+    "ioc": {
+      "type":       "Type",
+      "value":      "Value",
+      "context":    "Context",
+      "confidence": "Confidence",
+      "firstSeen":  "First Seen"
+    },
+    "noTimeline":  "No events",
+    "noIOCs":      "No IOCs extracted",
+    "noArtifacts": "No artifacts captured",
+    "noMITRE":     "No MITRE techniques mapped",
+    "tactic":      "Tactic: {tactic}"
+  },
+
+  "health": {
+    "title":    "Platform Health",
+    "subtitle": "Service status and sensor heartbeats",
+    "overall":  "Overall:",
+    "services": {
+      "postgres":   "PostgreSQL 16",
+      "redis":      "Redis 7",
+      "sensors":    "Sensors",
+      "llm_engine": "LLM Engine"
+    },
+    "serviceDesc": {
+      "postgres":   "Primary data store",
+      "redis":      "Pub/sub + rate limiting",
+      "sensors":    "Active OT decoy sensors",
+      "llm_engine": "Optional AI analysis"
+    },
+    "noSensors": "No active sensors. Generate a join token to add sensors.",
+    "activeSensors": "Active Sensors ({count})",
+    "portCoverage": "Port Coverage",
+    "ports": {
+      "102": "S7comm",
+      "502": "Modbus",
+      "80":  "HMI HTTP",
+      "443": "HMI HTTPS"
+    },
+    "fix": "Fix: {fix}"
+  },
+
+  "sensors": {
+    "title":    "Sensors",
+    "subtitle": "Registered OT decoy sensors",
+    "addSensor":"Add Sensor",
+    "generateToken": {
+      "title":       "Generate Join Token",
+      "placeholder": "Sensor name (e.g. ot-segment-a)",
+      "generate":    "Generate",
+      "generating":  "Generating…",
+      "warning":     "The join token is single-use and valid for 24 hours. Copy it immediately — it will not be shown again."
+    },
+    "tokenGenerated": {
+      "title":    "Token Generated — Copy Immediately",
+      "body":     "This token will not be shown again. Set it as SENSOR_JOIN_TOKEN on your sensor.",
+      "envHint":  "SENSOR_JOIN_TOKEN",
+      "expires":  "Expires: {date}"
+    },
+    "noSensors": {
+      "title":    "No sensors registered",
+      "subtitle": "Generate a join token to add your first sensor"
+    },
+    "table": {
+      "status":       "Status",
+      "name":         "Name",
+      "ip":           "IP",
+      "version":      "Version",
+      "capabilities": "Capabilities",
+      "lastSeen":     "Last Seen"
+    },
+    "revoke": "Revoke Sensor",
+    "portCoverage": "Port Coverage"
+  },
+
+  "reauth": {
+    "title":       "Re-authentication Required",
+    "body":        "This action requires you to confirm your password.",
+    "placeholder": "Current Password",
+    "confirm":     "Confirm",
+    "confirming":  "Verifying…",
+    "cancel":      "Cancel",
+    "wrongPassword":"Incorrect password"
+  },
+
+  "admin": {
+    "title":   "Admin Console",
+    "subtitle":"System management and configuration",
+    "platformStatus": "Platform Status",
+    "quickLinks": {
+      "users":         "Users",
+      "usersDesc":     "{count} accounts",
+      "notifications": "Notifications",
+      "notificationsDesc": "SMTP alerts",
+      "siem":          "SIEM",
+      "siemDesc":      "Splunk / Webhook",
+      "auditLog":      "Audit Log",
+      "auditLogDesc":  "All admin actions",
+      "sensors":       "Sensors",
+      "sensorsDesc":   "Decoy sensor registry",
+      "health":        "Health",
+      "healthDesc":    "Platform status"
+    }
+  },
+
+  "users": {
+    "title":    "User Management",
+    "subtitle": "{count} users",
+    "newUser":  "New User",
+    "createForm": {
+      "title":    "Create New User",
+      "username": "Username",
+      "email":    "Email",
+      "password": "Password (min 12 chars)",
+      "role":     "Role",
+      "roles": {
+        "user":       "User (Operator)",
+        "superadmin": "Superadmin"
+      }
+    },
+    "table": {
+      "user":       "User",
+      "role":       "Role",
+      "status":     "Status",
+      "lastLogin":  "Last Login",
+      "created":    "Created"
+    },
+    "roles": {
+      "superadmin": "Superadmin",
+      "user":       "Operator"
+    },
+    "status": {
+      "active":   "Active",
+      "disabled": "Disabled"
+    },
+    "errors": {
+      "usernameTaken": "Username already taken",
+      "createFailed":  "Failed to create user",
+      "cannotDeleteSelf": "You cannot delete your own account"
+    }
+  },
+
+  "notifications": {
+    "title":    "Notifications",
+    "subtitle": "SMTP alert configuration",
+    "enable":   "Enable Email Notifications",
+    "enableDesc":"Send alerts for high-severity events",
+    "test":     "Test",
+    "testing":  "Sending…",
+    "fields": {
+      "host":          "SMTP Host",
+      "port":          "Port",
+      "username":      "Username",
+      "password":      "Password",
+      "passwordHint":  "Leave blank to keep existing",
+      "fromAddress":   "From Address",
+      "toAddresses":   "To Addresses (comma-separated)",
+      "minSeverity":   "Minimum Severity",
+      "cooldown":      "Cooldown (seconds)"
+    },
+    "options": {
+      "useTLS":       "Use TLS (SMTP_SSL)",
+      "useSTARTTLS":  "Use STARTTLS",
+      "healthAlerts": "Health Threshold Alerts"
+    },
+    "testSuccess": "✓ {message}",
+    "testFailed":  "✗ {message}"
+  },
+
+  "siem": {
+    "title":    "SIEM Integration",
+    "subtitle": "Splunk HEC and webhook delivery",
+    "enable":   "Enable SIEM Forwarding",
+    "test":     "Test Delivery",
+    "testing":  "Sending…",
+    "fields": {
+      "type":        "SIEM Type",
+      "types": {
+        "splunk_hec": "Splunk HEC",
+        "webhook":    "Generic Webhook"
+      },
+      "minSeverity": "Minimum Severity",
+      "url":         "Endpoint URL",
+      "urlHint":     "https://splunk.example.com:8088/services/collector/event",
+      "hecToken":    "HEC Token",
+      "bearerToken": "Bearer Token",
+      "tokenHint":   "Leave blank to keep existing"
+    },
+    "deliveryLog": {
+      "title":      "Delivery Log",
+      "noEntries":  "No deliveries yet",
+      "table": {
+        "time":   "Time",
+        "type":   "Type",
+        "status": "Status",
+        "http":   "HTTP",
+        "error":  "Error"
+      }
+    }
+  },
+
+  "auditLog": {
+    "title":    "Audit Log",
+    "subtitle": "Immutable record of all admin actions",
+    "noEntries":"No audit entries",
+    "table": {
+      "time":       "Time",
+      "user":       "User",
+      "action":     "Action",
+      "target":     "Target",
+      "detail":     "Detail",
+      "ip":         "IP"
+    }
+  },
+
+  "severity": {
+    "critical": "Critical",
+    "high":     "High",
+    "medium":   "Medium",
+    "low":      "Low",
+    "noise":    "Noise"
+  },
+
+  "signalTier": {
+    "impact":     "Impact",
+    "suspicious": "Suspicious",
+    "recon":      "Recon",
+    "noise":      "Noise"
+  },
+
+  "healthStatus": {
+    "healthy":   "Healthy",
+    "degraded":  "Degraded",
+    "unhealthy": "Unhealthy",
+    "disabled":  "Disabled",
+    "offline":   "Offline",
+    "active":    "Active",
+    "pending":   "Pending",
+    "revoked":   "Revoked"
+  }
+}

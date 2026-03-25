@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 150" fill="none">
+  <defs>
+    <linearGradient id="brandOrange" x1="0" x2="116" y1="18" y2="132" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFB15D"/>
+      <stop offset="0.52" stop-color="#F18A27"/>
+      <stop offset="1" stop-color="#A05C1E"/>
+    </linearGradient>
+    <linearGradient id="brandIvory" x1="130" x2="470" y1="18" y2="132" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FEFEFD"/>
+      <stop offset="0.58" stop-color="#ECE8DF"/>
+      <stop offset="1" stop-color="#C3C9D2"/>
+    </linearGradient>
+  </defs>
+
+  <text
+    x="0"
+    y="108"
+    fill="url(#brandOrange)"
+    font-family="Trebuchet MS, Segoe UI, Arial, sans-serif"
+    font-size="108"
+    font-weight="700"
+    letter-spacing="-2"
+  >O</text>
+  <text
+    x="82"
+    y="108"
+    fill="url(#brandIvory)"
+    font-family="Trebuchet MS, Segoe UI, Arial, sans-serif"
+    font-size="108"
+    font-weight="700"
+    letter-spacing="-2"
+  >Trap</text>
+</svg>
