@@ -15,9 +15,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -187,15 +187,17 @@ func (j *Joiner) Join(ctx context.Context) (*Identity, error) {
 		tlsCfg.InsecureSkipVerify = false
 	}
 
-	conn, err := grpc.DialContext(ctx, j.managerAddr,
+	conn, err := grpc.NewClient(j.managerAddr,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
-		grpc.WithBlock(),
-		grpc.WithTimeout(30*time.Second),
 	)
 	if err != nil {
 		return nil, friendlyJoinError(j.managerAddr, err)
 	}
 	defer conn.Close()
+
+	// Apply a 30-second deadline to the Join RPC.
+	joinCtx, joinCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer joinCancel()
 
 	client := sensorv1.NewSensorServiceClient(conn)
 
@@ -204,7 +206,7 @@ func (j *Joiner) Join(ctx context.Context) (*Identity, error) {
 		localIP = ip
 	}
 
-	resp, err := client.Join(ctx, &sensorv1.JoinRequest{
+	resp, err := client.Join(joinCtx, &sensorv1.JoinRequest{
 		JoinToken:    j.token,
 		SensorName:   j.sensorName,
 		Version:      j.version,
@@ -333,9 +335,12 @@ func decryptAESGCM(key, ciphertext []byte) ([]byte, error) {
 }
 
 func getOutboundIP() (string, error) {
-	if runtime.GOOS == "linux" {
-		// Best-effort: read from /proc/net/route or similar
-		// Simplified implementation
+	// UDP dial trick: no packet is sent, but the OS selects the correct
+	// outbound interface so LocalAddr() returns the real IP.
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "0.0.0.0", err
 	}
-	return "0.0.0.0", nil
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil
 }

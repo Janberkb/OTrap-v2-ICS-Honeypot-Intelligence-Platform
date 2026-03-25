@@ -45,6 +45,7 @@ export default function SessionsPage() {
 
     try {
       const r = await fetch(apiPath(`/sessions?${params.toString()}`), { credentials: "include" });
+      if (!r.ok) return;
       const d = await r.json();
       setSessions(d.items ?? []);
       setTotal(d.total ?? 0);

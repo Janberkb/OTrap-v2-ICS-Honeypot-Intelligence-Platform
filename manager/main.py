@@ -38,7 +38,7 @@ def create_app() -> FastAPI:
         app.state.db_factory = session_factory
 
         # ── Redis ─────────────────────────────────────────────────────────────
-        redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+        redis = aioredis.from_url(settings.redis_url_with_auth, decode_responses=True)
         app.state.redis = redis
 
         # ── CA / mTLS ─────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ def create_app() -> FastAPI:
         app.state.grpc_server = grpc_server
 
         # ── Analyzer Worker ───────────────────────────────────────────────────
-        analyzer = AnalyzerWorker(settings.redis_url, session_factory, redis)
+        analyzer = AnalyzerWorker(settings.redis_url_with_auth, session_factory, redis)
         analyzer_task = asyncio.create_task(analyzer.run())
         app.state.analyzer_task = analyzer_task
 

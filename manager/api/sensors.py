@@ -80,8 +80,10 @@ def _build_deployment_command(
         container_name,
         "--restart",
         "unless-stopped",
-        "--network",
-        "host",
+        "-p", "102:102",
+        "-p", "502:502",
+        "-p", "80:80",
+        "-p", "443:443",
         "--label",
         f"otrap.sensor_id={sensor_id}",
         "--label",
@@ -141,8 +143,8 @@ def _build_warnings(*, manager_addr: str, grpc_host: str) -> list[str]:
 
     if grpc_host and _is_loopback_host(grpc_host):
         warnings.append(
-            "GRPC_HOST is bound to loopback. Remote sensors cannot reach TCP/9443 until you set GRPC_HOST "
-            "to the management server IP and rerun `docker compose up -d manager`."
+            "GRPC_HOST is bound to loopback — remote sensors cannot reach the manager. "
+            "Set GRPC_HOST to the management server's reachable IP in .env and restart the manager before generating sensor tokens."
         )
 
     return warnings
@@ -259,6 +261,20 @@ async def generate_join_token(
         detail={"sensor_name": sensor_name},
         source_ip=request.client.host if request.client else None,
     )
+
+    if settings.grpc_host and _is_loopback_host(settings.grpc_host):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "GRPC_HOST_LOOPBACK",
+                "message": (
+                    "GRPC_HOST is bound to loopback (127.0.0.1). "
+                    "Remote sensors cannot reach the manager. "
+                    "Set GRPC_HOST to the management server's reachable IP in .env "
+                    "and restart the manager before generating sensor tokens."
+                ),
+            },
+        )
 
     warnings = _build_warnings(manager_addr=manager_addr, grpc_host=settings.grpc_host)
     sensor_id = str(sensor.id)

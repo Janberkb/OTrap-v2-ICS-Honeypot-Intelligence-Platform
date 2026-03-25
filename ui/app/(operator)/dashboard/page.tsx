@@ -15,10 +15,10 @@ export default function DashboardPage() {
   // ── Load initial data ──────────────────────────────────────────────────────
   useEffect(() => {
     fetch(apiPath("/events/top-attackers?limit=8"), { credentials: "include" })
-      .then((r) => r.json()).then((d) => setTopAttackers(d.items ?? []));
+      .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setTopAttackers(d.items ?? []); });
 
     fetch(apiPath("/sessions?is_actionable=true&limit=5"), { credentials: "include" })
-      .then((r) => r.json()).then((d) => setRecentSessions(d.items ?? []));
+      .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setRecentSessions(d.items ?? []); });
   }, []);
 
   const kpis = [

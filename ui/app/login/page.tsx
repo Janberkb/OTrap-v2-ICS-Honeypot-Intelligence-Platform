@@ -46,7 +46,7 @@ export default function LoginPage() {
       }
 
       const user = await res.json();
-      router.push(user.role === "superadmin" ? "/dashboard" : "/dashboard");
+      router.push(user.role === "superadmin" ? "/admin" : "/dashboard");
     } catch {
       setError("Network error — check your connection");
     } finally {

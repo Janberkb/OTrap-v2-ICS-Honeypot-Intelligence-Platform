@@ -66,7 +66,8 @@ services:
       POSTGRES_DB:       ${POSTGRES_DB:-otrap}
       POSTGRES_USER:     ${POSTGRES_USER:-otrap}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
-      REDIS_URL:         redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      REDIS_PASSWORD:    ${REDIS_PASSWORD:-}
+      REDIS_URL:         redis://redis:6379/0
       API_SECRET_KEY:    ${API_SECRET_KEY:?API_SECRET_KEY required}
       ENCRYPTION_KEY:    ${ENCRYPTION_KEY:?ENCRYPTION_KEY required}
       SESSION_SECURE:    ${SESSION_SECURE:-true}

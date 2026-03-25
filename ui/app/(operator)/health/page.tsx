@@ -40,7 +40,10 @@ export default function HealthPage() {
     setLoading(true);
     try {
       const r = await fetch(apiPath("/health"), { credentials: "include" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setHealth(await r.json());
+    } catch {
+      // silently ignore — loading spinner stops, health stays null
     } finally {
       setLoading(false);
     }

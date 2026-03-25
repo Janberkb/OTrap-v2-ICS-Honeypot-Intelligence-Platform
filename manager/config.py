@@ -25,6 +25,13 @@ class Settings(BaseSettings):
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     redis_url: str = "redis://redis:6379/0"
+    redis_password: str = ""
+
+    @property
+    def redis_url_with_auth(self) -> str:
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@redis:6379/0"
+        return self.redis_url
 
     # ── Security ──────────────────────────────────────────────────────────────
     api_secret_key: str = "CHANGE_ME_64_CHAR_SECRET"
