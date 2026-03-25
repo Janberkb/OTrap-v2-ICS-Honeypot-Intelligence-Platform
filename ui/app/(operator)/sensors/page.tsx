@@ -22,6 +22,8 @@ type OnboardingPayload = {
   sensor_cert_enc_key: string;
   manager_addr: string;
   sensor_image_ref: string;
+  installer_url?: string;
+  installer_command?: string;
   deployment_command: string;
   env_file_snippet: string;
   compose_command: string;
@@ -52,7 +54,7 @@ export default function SensorsPage() {
   const [loading,       setLoading]       = useState(true);
   const [newName,       setNewName]       = useState("");
   const [newPayload,    setNewPayload]    = useState<OnboardingPayload | null>(null);
-  const [copiedField,   setCopiedField]   = useState<"token" | "command" | "env" | null>(null);
+  const [copiedField,   setCopiedField]   = useState<"token" | "install" | "command" | "env" | null>(null);
   const [generating,    setGenerating]    = useState(false);
   const [showForm,      setShowForm]      = useState(false);
   const [formError,     setFormError]     = useState("");
@@ -139,7 +141,7 @@ export default function SensorsPage() {
     void load();
   }
 
-  function copyValue(field: "token" | "command" | "env", text: string) {
+  function copyValue(field: "token" | "install" | "command" | "env", text: string) {
     void navigator.clipboard.writeText(text);
     setCopiedField(field);
     window.setTimeout(() => setCopiedField(null), 2000);
@@ -194,8 +196,8 @@ export default function SensorsPage() {
             <div className="flex-1">
               <p className="font-semibold text-sm mb-1">Sensor Onboarding Ready</p>
               <p className="text-xs text-text-muted">
-                The join token is single-use. The Docker command is the primary path for a remote host; the manual
-                `.env.sensor` snippet is kept as the advanced path.
+                Copy the install command below and run it on the target host. It will clone the repo, build the
+                sensor image, and start the container automatically.
               </p>
             </div>
           </div>
@@ -210,11 +212,7 @@ export default function SensorsPage() {
               <p className="font-mono text-xs break-all">{newPayload.manager_addr}</p>
             </div>
             <div className="rounded-md border border-bg-border bg-bg-base/70 p-3">
-              <p className="text-xs uppercase text-text-faint mb-1">Sensor Image</p>
-              <p className="font-mono text-xs break-all">{newPayload.sensor_image_ref}</p>
-            </div>
-            <div className="rounded-md border border-bg-border bg-bg-base/70 p-3">
-              <p className="text-xs uppercase text-text-faint mb-1">Expires</p>
+              <p className="text-xs uppercase text-text-faint mb-1">Token Expires</p>
               <p className="font-mono text-xs break-all">{newPayload.expires_at}</p>
             </div>
           </div>
@@ -224,7 +222,7 @@ export default function SensorsPage() {
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 mt-0.5 text-yellow-300 flex-shrink-0" />
                 <div className="space-y-1">
-                  <p className="text-xs font-semibold uppercase text-yellow-200">Remote deployment warnings</p>
+                  <p className="text-xs font-semibold uppercase text-yellow-200">Deployment warnings</p>
                   {newPayload.warnings.map((warning) => (
                     <p key={warning} className="text-xs text-yellow-100/90">{warning}</p>
                   ))}
@@ -233,71 +231,106 @@ export default function SensorsPage() {
             </div>
           )}
 
-          <div className="rounded-md border border-accent/30 bg-bg-base/70 p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-accent" />
-                <p className="font-semibold text-sm">Remote Docker Run Command</p>
-              </div>
-              <button
-                onClick={() => copyValue("command", newPayload.deployment_command)}
-                className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
-              >
-                {copiedField === "command"
-                  ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
-                  : <Copy className="w-3.5 h-3.5" />}
-                {copiedField === "command" ? "Copied!" : "Copy"}
-              </button>
-            </div>
-            <pre className="font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 text-severity-low whitespace-pre-wrap break-all overflow-x-auto">
-              {newPayload.deployment_command}
-            </pre>
-          </div>
-
-          <div className="rounded-md border border-bg-border bg-bg-base/70 p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <p className="font-semibold text-sm">Join Token</p>
-              <button
-                onClick={() => copyValue("token", newPayload.join_token)}
-                className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
-              >
-                {copiedField === "token"
-                  ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
-                  : <Copy className="w-3.5 h-3.5" />}
-                {copiedField === "token" ? "Copied!" : "Copy"}
-              </button>
-            </div>
-            <code className="block font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 text-severity-low break-all">
-              {newPayload.join_token}
-            </code>
-            <p className="text-xs text-text-faint">{newPayload.warning}</p>
-          </div>
-
-          <details className="rounded-md border border-bg-border bg-bg-base/70 p-4">
-            <summary className="cursor-pointer list-none font-semibold text-sm flex items-center justify-between gap-3">
-              <span>Advanced Manual Path</span>
-              <span className="text-xs text-text-faint">{newPayload.compose_command}</span>
-            </summary>
-            <div className="mt-4 space-y-3">
+          {/* PRIMARY: single-command installer */}
+          {newPayload.installer_command && (
+            <div className="rounded-md border-2 border-accent/50 bg-bg-base/70 p-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs uppercase text-text-faint">.env.sensor</p>
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-4 h-4 text-accent" />
+                  <p className="font-semibold text-sm">Install Command</p>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-accent/20 text-accent font-medium">run on target host</span>
+                </div>
                 <button
-                  onClick={() => copyValue("env", newPayload.env_file_snippet)}
-                  className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
+                  onClick={() => copyValue("install", newPayload.installer_command!)}
+                  className="btn-primary flex items-center gap-1.5 text-xs whitespace-nowrap"
                 >
-                  {copiedField === "env"
-                    ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
+                  {copiedField === "install"
+                    ? <CheckCircle className="w-3.5 h-3.5" />
                     : <Copy className="w-3.5 h-3.5" />}
-                  {copiedField === "env" ? "Copied!" : "Copy"}
+                  {copiedField === "install" ? "Copied!" : "Copy"}
                 </button>
               </div>
-              <pre className="font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 whitespace-pre-wrap break-all overflow-x-auto">
-                {newPayload.env_file_snippet}
+              <pre className="font-mono text-xs bg-bg-base border border-accent/20 rounded px-3 py-3 text-severity-low whitespace-pre-wrap break-all overflow-x-auto">
+                {newPayload.installer_command}
               </pre>
-              <p className="text-xs text-text-muted">Then run:</p>
-              <pre className="font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 whitespace-pre-wrap break-all overflow-x-auto">
-                {newPayload.compose_command}
-              </pre>
+              <p className="text-xs text-text-faint">
+                Requires Docker 24+ and git. Clones the repo, builds the sensor image locally, and starts the container.
+                Takes ~2 min on first run.
+              </p>
+            </div>
+          )}
+
+          {/* ADVANCED: pre-built image, join token, compose */}
+          <details className="rounded-md border border-bg-border bg-bg-base/70 p-4">
+            <summary className="cursor-pointer list-none font-semibold text-sm flex items-center gap-2">
+              <span>Advanced options</span>
+              <span className="text-xs text-text-faint">(pre-built image / join token / compose)</span>
+            </summary>
+            <div className="mt-4 space-y-4">
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase text-text-faint">Docker run (pre-built image)</p>
+                  <button
+                    onClick={() => copyValue("command", newPayload.deployment_command)}
+                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
+                  >
+                    {copiedField === "command"
+                      ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
+                      : <Copy className="w-3.5 h-3.5" />}
+                    {copiedField === "command" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <pre className="font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 text-severity-low whitespace-pre-wrap break-all overflow-x-auto">
+                  {newPayload.deployment_command}
+                </pre>
+                <p className="text-xs text-text-faint">
+                  Use this only if you have already built and pushed the sensor image to a registry.
+                  Set <code className="text-accent">SENSOR_IMAGE_REF</code> in .env before generating.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase text-text-faint">Join Token (single-use)</p>
+                  <button
+                    onClick={() => copyValue("token", newPayload.join_token)}
+                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
+                  >
+                    {copiedField === "token"
+                      ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
+                      : <Copy className="w-3.5 h-3.5" />}
+                    {copiedField === "token" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <code className="block font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 text-severity-low break-all">
+                  {newPayload.join_token}
+                </code>
+                <p className="text-xs text-text-faint">{newPayload.warning}</p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase text-text-faint">.env.sensor (Docker Compose path)</p>
+                  <button
+                    onClick={() => copyValue("env", newPayload.env_file_snippet)}
+                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
+                  >
+                    {copiedField === "env"
+                      ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
+                      : <Copy className="w-3.5 h-3.5" />}
+                    {copiedField === "env" ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+                <pre className="font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 whitespace-pre-wrap break-all overflow-x-auto">
+                  {newPayload.env_file_snippet}
+                </pre>
+                <p className="text-xs text-text-muted">Then run:</p>
+                <pre className="font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 whitespace-pre-wrap break-all overflow-x-auto">
+                  {newPayload.compose_command}
+                </pre>
+              </div>
+
             </div>
           </details>
         </div>

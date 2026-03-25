@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     join_token_ttl_hours: int = 24
     sensor_public_manager_addr: str = "127.0.0.1:9443"
     sensor_image_ref: str = "ghcr.io/otrap/sensor:latest"
+    sensor_repo_url: str = "https://github.com/Janberkb/OTrap-v2-ICS-Honeypot-Intelligence-Platform.git"
+
+    @property
+    def installer_base_url(self) -> str:
+        """HTTP URL for the manager API, derived from sensor_public_manager_addr."""
+        try:
+            host, _ = self.sensor_public_manager_addr.rsplit(":", 1)
+            return f"http://{host}:{self.management_port}"
+        except Exception:
+            return f"http://localhost:{self.management_port}"
 
     # ── Management ────────────────────────────────────────────────────────────
     management_host: str = "0.0.0.0"
