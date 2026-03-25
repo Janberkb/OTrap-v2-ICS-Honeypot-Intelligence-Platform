@@ -12,7 +12,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { HealthBadge, formatRelative, ReauthModal } from "@/components/ui";
-import { apiPath } from "@/lib/api";
+import { apiPath, streamUrl } from "@/lib/api";
 
 type OnboardingPayload = {
   sensor_id: string;
@@ -58,7 +58,8 @@ export default function SensorsPage() {
   const [generating,    setGenerating]    = useState(false);
   const [showForm,      setShowForm]      = useState(false);
   const [formError,     setFormError]     = useState("");
-  const [revokeTarget,  setRevokeTarget]  = useState<string | null>(null);
+  const [selected,      setSelected]      = useState<Set<string>>(new Set());
+  const [revokeTargets, setRevokeTargets] = useState<string[]>([]);
   const [reauthOpen,    setReauthOpen]    = useState(false);
   const [reauthLoading, setReauthLoading] = useState(false);
   const [reauthError,   setReauthError]   = useState("");
@@ -76,6 +77,45 @@ export default function SensorsPage() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  // SSE: react instantly to sensor health changes without polling
+  useEffect(() => {
+    const es = new EventSource(streamUrl(), { withCredentials: true });
+
+    es.addEventListener("health_update", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data as string);
+        if (!data.sensor_id) return;
+
+        setSensors((prev) =>
+          prev.map((s) => {
+            if (s.id !== data.sensor_id) return s;
+            if (data.status === "offline") {
+              return { ...s, status: "offline", health: null };
+            }
+            if (data.status === "active") {
+              return { ...s, status: "active" };
+            }
+            // Heartbeat data — update health metrics in-place
+            if (data.cpu_percent !== undefined) {
+              return { ...s, health: { ...(s.health ?? {}), ...data } };
+            }
+            return s;
+          })
+        );
+      } catch {
+        // ignore malformed events
+      }
+    });
+
+    es.onerror = () => {
+      // SSE dropped — fall back to a one-off reload so state stays accurate
+      void load();
+    };
+
+    return () => es.close();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function generateToken() {
@@ -124,11 +164,19 @@ export default function SensorsPage() {
     }
     setReauthOpen(false);
     setReauthLoading(false);
-    if (revokeTarget) await doRevoke(revokeTarget);
+    await Promise.all(revokeTargets.map((id) => doRevoke(id)));
+    setSelected(new Set());
+    setRevokeTargets([]);
+    void load();
   }
 
   function startRevoke(sensorId: string) {
-    setRevokeTarget(sensorId);
+    setRevokeTargets([sensorId]);
+    setReauthOpen(true);
+  }
+
+  function startBulkRevoke() {
+    setRevokeTargets([...selected]);
     setReauthOpen(true);
   }
 
@@ -137,8 +185,21 @@ export default function SensorsPage() {
       method: "DELETE", credentials: "include",
       headers: { "X-CSRF-Token": getCSRF() },
     });
-    setRevokeTarget(null);
-    void load();
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    const deletable = sensors.filter((s) => s.status !== "revoked").map((s) => s.id);
+    setSelected((prev) =>
+      prev.size === deletable.length ? new Set() : new Set(deletable)
+    );
   }
 
   function copyValue(field: "token" | "install" | "command" | "env", text: string) {
@@ -337,9 +398,28 @@ export default function SensorsPage() {
       )}
 
       <div className="card overflow-hidden">
+        {isAdmin && selected.size > 0 && (
+          <div className="flex items-center justify-between px-4 py-2 border-b border-bg-border bg-red-900/10">
+            <span className="text-xs text-text-muted">{selected.size} sensor{selected.size > 1 ? "s" : ""} selected</span>
+            <button onClick={startBulkRevoke} className="btn-secondary text-xs px-3 py-1 flex items-center gap-1.5 text-severity-critical border-severity-critical/30 hover:bg-severity-critical/10">
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Selected ({selected.size})
+            </button>
+          </div>
+        )}
         <table className="data-table">
           <thead>
             <tr>
+              {isAdmin && (
+                <th className="w-8">
+                  <input
+                    type="checkbox"
+                    className="accent-accent"
+                    checked={selected.size > 0 && selected.size === sensors.filter((s) => s.status !== "revoked").length}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
+              )}
               <th>Status</th>
               <th>Name</th>
               <th>IP</th>
@@ -351,10 +431,10 @@ export default function SensorsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="text-center text-text-faint py-12">Loading…</td></tr>
+              <tr><td colSpan={isAdmin ? 8 : 6} className="text-center text-text-faint py-12">Loading…</td></tr>
             ) : sensors.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-12">
+                <td colSpan={isAdmin ? 8 : 6} className="py-12">
                   <div className="text-center text-text-faint">
                     <Wifi className="w-10 h-10 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">No sensors registered</p>
@@ -363,7 +443,19 @@ export default function SensorsPage() {
                 </td>
               </tr>
             ) : sensors.map((s) => (
-              <tr key={s.id}>
+              <tr key={s.id} className={selected.has(s.id) ? "bg-red-900/5" : ""}>
+                {isAdmin && (
+                  <td className="w-8">
+                    {s.status !== "revoked" && (
+                      <input
+                        type="checkbox"
+                        className="accent-accent"
+                        checked={selected.has(s.id)}
+                        onChange={() => toggleSelect(s.id)}
+                      />
+                    )}
+                  </td>
+                )}
                 <td>
                   <div className="flex items-center gap-2">
                     {s.status === "active"
@@ -430,7 +522,7 @@ export default function SensorsPage() {
       <ReauthModal
         open={reauthOpen}
         onConfirm={doReauth}
-        onCancel={() => { setReauthOpen(false); setRevokeTarget(null); }}
+        onCancel={() => { setReauthOpen(false); setRevokeTargets([]); }}
         loading={reauthLoading}
         error={reauthError}
       />

@@ -51,11 +51,20 @@ async def get_health(request: Request, db=Depends(get_db)) -> dict:
             "port_status": health_data.get("port_status") if health_data else [],
         })
 
-    any_unhealthy = any(sh["status"] != "healthy" for sh in sensor_statuses)
+    active_count = sum(1 for sh in sensor_statuses if sh["status"] == "healthy")
+    if not sensor_statuses:
+        sensors_svc_status = "healthy"          # no sensors registered
+    elif active_count == 0:
+        sensors_svc_status = "unhealthy"        # all sensors offline
+    elif active_count < len(sensor_statuses):
+        sensors_svc_status = "degraded"         # some sensors offline
+    else:
+        sensors_svc_status = "healthy"          # all sensors online
     services["sensors"] = {
-        "status":  "degraded" if any_unhealthy and sensor_statuses else "healthy",
+        "status":  sensors_svc_status,
         "sensors": sensor_statuses,
-        "count":   len(sensor_statuses),
+        "count":   active_count,
+        "total":   len(sensor_statuses),
     }
 
     # ── LLM Engine (optional) ─────────────────────────────────────────────────

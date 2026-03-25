@@ -25,3 +25,4 @@ async def write_audit(
         detail=detail,
         source_ip=source_ip,
     )
+    await db.commit()

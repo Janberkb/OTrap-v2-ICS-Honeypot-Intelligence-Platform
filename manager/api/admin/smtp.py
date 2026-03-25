@@ -104,9 +104,13 @@ async def test_smtp(
 
     try:
         _send_test_email(cfg, password)
+        await write_audit(db, user, "test_smtp",
+                          detail={"host": cfg.host, "result": "success"})
         return {"ok": True, "message": "Test email sent successfully"}
     except Exception as e:
         logger.error("SMTP test failed", exc_info=True)
+        await write_audit(db, user, "test_smtp",
+                          detail={"host": cfg.host, "result": "failed", "error": str(e)})
         raise HTTPException(status_code=400, detail={"error": "SMTP_SEND_FAILED", "detail": str(e)})
 
 

@@ -13,6 +13,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/otrap/sensor/internal/config"
 	"github.com/otrap/sensor/internal/dispatch"
@@ -84,7 +85,11 @@ func (c *Client) RunEventStream(ctx context.Context, disp *dispatch.Dispatcher, 
 }
 
 func (c *Client) runStream(ctx context.Context, disp *dispatch.Dispatcher, cfg *config.SensorConfig) error {
-	stream, err := c.client.EventStream(ctx)
+	// Send sensor-id as metadata so Manager knows identity at stream-open time,
+	// even when no events flow (idle sensor with no attack traffic).
+	md := metadata.Pairs("sensor-id", cfg.SensorID)
+	streamCtx := metadata.NewOutgoingContext(ctx, md)
+	stream, err := c.client.EventStream(streamCtx)
 	if err != nil {
 		return err
 	}

@@ -129,6 +129,21 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
             },
         )
 
+        # Write initial health record so the sensor appears online immediately
+        # (before the first Heartbeat RPC arrives ~30s later).
+        initial_health = {
+            "sensor_id": str(sensor.id),
+            "events_buffered": 0,
+            "events_sent_total": 0,
+            "cpu_percent": 0.0,
+            "mem_bytes_rss": 0,
+            "port_status": [],
+            "last_heartbeat": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._redis.setex(
+            f"sensor.health:{str(sensor.id)}", 90, json.dumps(initial_health)
+        )
+
         # Publish sensor join event to Redis for SSE broadcast
         await self._redis.publish(
             "sse.broadcast",
@@ -170,50 +185,71 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
         sensor_id: str | None = None
         events_received = 0
 
-        async for event in request_iterator:
-            if context.cancelled():
-                break
-
-            if sensor_id is None:
-                sensor_id = await self._authenticate_sensor(
-                    context,
-                    claimed_sensor_id=event.sensor_id,
-                )
-                if sensor_id is None:
-                    return
-                logger.info("EventStream opened", extra={"sensor_id": sensor_id})
-
-            # Validate sensor_id matches authenticated identity
-            if event.sensor_id != sensor_id:
-                logger.warning(
-                    "Sensor sent event with mismatched sensor_id",
-                    extra={"authenticated": sensor_id, "claimed": event.sensor_id},
-                )
-                continue
-
-            events_received += 1
-
-            # Serialize and publish to Redis
-            event_payload = self._serialize_event(event)
-            await self._redis.publish("sensor.events", json.dumps(event_payload))
-
-            # Send ACK back to sensor
-            yield sensor_pb2.ManagerCommand(
-                ack=sensor_pb2.AckCommand(event_id=event.event_id)
+        # Authenticate at stream-open time using gRPC metadata header.
+        # This ensures sensor_id is known even when no events flow (idle sensors).
+        sensor_id = await self._authenticate_from_metadata(context)
+        if sensor_id is not None:
+            logger.info("EventStream opened", extra={"sensor_id": sensor_id})
+            asyncio.get_event_loop().create_task(
+                self._log_sensor_state(sensor_id, "sensor_online", {})
             )
 
-            # Periodically send ping to keep stream alive
-            if events_received % 100 == 0:
+        try:
+            async for event in request_iterator:
+                if context.cancelled():
+                    break
+
+                if sensor_id is None:
+                    # Insecure/no-cert fallback: authenticate from first event
+                    sensor_id = await self._authenticate_sensor(
+                        context,
+                        claimed_sensor_id=event.sensor_id,
+                    )
+                    if sensor_id is None:
+                        return
+                    logger.info("EventStream opened (fallback)", extra={"sensor_id": sensor_id})
+                    asyncio.get_event_loop().create_task(
+                        self._log_sensor_state(sensor_id, "sensor_online", {})
+                    )
+
+                # Validate sensor_id matches authenticated identity
+                if event.sensor_id != sensor_id:
+                    logger.warning(
+                        "Sensor sent event with mismatched sensor_id",
+                        extra={"authenticated": sensor_id, "claimed": event.sensor_id},
+                    )
+                    continue
+
+                events_received += 1
+
+                # Serialize and publish to Redis
+                event_payload = self._serialize_event(event)
+                await self._redis.publish("sensor.events", json.dumps(event_payload))
+
+                # Send ACK back to sensor
                 yield sensor_pb2.ManagerCommand(
-                    ping=sensor_pb2.PingCommand(nonce=uuid.uuid4().hex)
+                    ack=sensor_pb2.AckCommand(event_id=event.event_id)
                 )
 
-        logger.info(
-            "EventStream closed",
-            extra={"sensor_id": sensor_id, "events_received": events_received},
-        )
-        if sensor_id is not None:
-            await self._update_sensor_offline(sensor_id)
+                # Periodically send ping to keep stream alive
+                if events_received % 100 == 0:
+                    yield sensor_pb2.ManagerCommand(
+                        ping=sensor_pb2.PingCommand(nonce=uuid.uuid4().hex)
+                    )
+        except Exception:
+            pass  # stream closed by peer or cancelled — handled in finally
+        finally:
+            logger.info(
+                "EventStream closed",
+                extra={"sensor_id": sensor_id, "events_received": events_received},
+            )
+            if sensor_id is not None:
+                # create_task (not await): finally runs in a cancelled Task context,
+                # so any await raises CancelledError before the coroutine body starts.
+                # An independent Task is unaffected by the parent's cancellation.
+                asyncio.get_event_loop().create_task(
+                    self._update_sensor_offline(sensor_id)
+                )
 
     # ── Heartbeat ─────────────────────────────────────────────────────────────
 
@@ -254,7 +290,7 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
             ],
             "last_heartbeat": datetime.now(timezone.utc).isoformat(),
         }
-        await self._redis.setex(health_key, 90, json.dumps(health_data))
+        await self._redis.setex(health_key, 45, json.dumps(health_data))
 
         # Update DB last_seen_at (debounced — once per minute via Redis flag)
         db_update_key = f"sensor.db_update_flag:{sensor_id}"
@@ -396,6 +432,45 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
         await self._redis.setex(cache_key, 300, "1")
         return sensor_id
 
+    async def _authenticate_from_metadata(
+        self,
+        context: grpc.aio.ServicerContext,
+    ) -> str | None:
+        """
+        Extract sensor_id from gRPC invocation metadata ('sensor-id' header).
+
+        The Go sensor sends its sensor_id as metadata at stream-open time so
+        the manager knows the sensor identity immediately, even when no events
+        flow (idle sensor). Returns sensor_id if valid and active, None if the
+        header is absent or the sensor is unknown/inactive.
+        Never calls context.abort().
+        """
+        try:
+            meta = dict(context.invocation_metadata())
+            sensor_id = meta.get("sensor-id")
+            if not sensor_id:
+                return None
+            uuid.UUID(sensor_id)  # Validate format
+        except Exception:
+            return None
+
+        # Validate sensor is active (uses Redis cache)
+        try:
+            cache_key = f"sensor.active:{sensor_id}"
+            if await self._redis.exists(cache_key):
+                return sensor_id
+
+            async with self._db_factory() as session:
+                sensor = await models.Sensor.get_by_id(session, sensor_id)
+                if sensor is None or sensor.status != "active":
+                    return None
+
+            await self._redis.setex(cache_key, 300, "1")
+            return sensor_id
+        except Exception as e:
+            logger.debug("Could not validate sensor from metadata", extra={"error": str(e)})
+            return None
+
     async def _update_sensor_last_seen(self, sensor_id: str) -> None:
         try:
             async with self._db_factory() as session:
@@ -404,22 +479,41 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
         except Exception as e:
             logger.error("Failed to update sensor last_seen", extra={"error": str(e)})
 
+    async def _log_sensor_state(self, sensor_id: str, action: str, detail: dict) -> None:
+        """Write a system-level audit entry for sensor health state changes."""
+        try:
+            async with self._db_factory() as session:
+                await models.AuditLog.write(
+                    session,
+                    user_id=None,
+                    username="system",
+                    action=action,
+                    target_type="sensor",
+                    target_id=sensor_id,
+                    detail=detail,
+                )
+                await session.commit()
+        except Exception as e:
+            logger.error("Failed to log sensor state", extra={"action": action, "error": str(e)})
+
     async def _update_sensor_offline(self, sensor_id: str) -> None:
         try:
-            # Don't immediately mark offline — wait for heartbeat TTL to expire.
-            # The health check endpoint checks Redis TTL.
-            # Invalidate active cache.
+            # Immediately remove both caches so the next poll reflects offline state.
             await self._redis.delete(f"sensor.active:{sensor_id}")
+            await self._redis.delete(f"sensor.health:{sensor_id}")
 
             await self._redis.publish(
                 "sse.broadcast",
                 json.dumps({
                     "type": "health_update",
-                    "data": {"sensor_id": sensor_id, "status": "stream_closed"},
+                    "data": {"sensor_id": sensor_id, "status": "offline"},
                 }),
             )
         except Exception as e:
             logger.error("Failed to update sensor offline", extra={"error": str(e)})
+
+        # Audit: sensor went offline. Safe to await here — this runs in its own Task.
+        await self._log_sensor_state(sensor_id, "sensor_offline", {})
 
     def _serialize_event(self, event: sensor_pb2.SensorEvent) -> dict:
         """Convert proto SensorEvent to Redis-serializable dict."""

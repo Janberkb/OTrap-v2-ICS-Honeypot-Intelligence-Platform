@@ -117,10 +117,11 @@ class AnalyzerWorker:
             # 2. Write event
             db_event = await self._write_event(session, ev, db_session)
 
-            # 3. Extract IOCs from artifacts
+            # 3. Extract IOCs from artifacts — count only newly inserted rows
             iocs = extract_iocs(ev)
+            new_ioc_count = 0
             for ioc in iocs:
-                await models.IOC.upsert(
+                is_new = await models.IOC.upsert(
                     session,
                     session_id=db_session.id,
                     ioc_type=ioc["type"],
@@ -128,6 +129,8 @@ class AnalyzerWorker:
                     context=ioc.get("context"),
                     confidence=ioc.get("confidence", 1.0),
                 )
+                if is_new:
+                    new_ioc_count += 1
 
             # 4. Update session
             new_severity = SEVERITY_LABEL.get(ev.get("severity", "SEVERITY_NOISE"), "noise")
@@ -139,7 +142,7 @@ class AnalyzerWorker:
                 new_severity=new_severity,
                 cpu_stop=cpu_stop,
                 mitre=mitre,
-                ioc_count=len(iocs),
+                ioc_count=new_ioc_count,
                 artifact_count=len(ev.get("artifacts", [])),
             )
 

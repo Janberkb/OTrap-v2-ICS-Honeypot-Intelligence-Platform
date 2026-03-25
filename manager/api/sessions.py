@@ -9,9 +9,11 @@ import io
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from fastapi import Request
 from manager.db import models
 from manager.db.engine import get_db
 from manager.api.auth import get_current_user
+from manager.security.audit import write_audit
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -51,6 +53,7 @@ async def list_sessions(
 
 @router.get("/export/csv")
 async def export_sessions_csv(
+    request: Request,
     columns: str = Query("id,source_ip,severity,signal_tier,primary_protocol,cpu_stop_occurred,event_count,started_at"),
     severity: str | None = Query(None),
     db=Depends(get_db),
@@ -65,6 +68,10 @@ async def export_sessions_csv(
     for s in sessions:
         row = [str(getattr(s, col, "")) for col in cols]
         writer.writerow(row)
+
+    await write_audit(db, user, "export_sessions",
+                      detail={"row_count": len(sessions), "severity_filter": severity},
+                      source_ip=request.client.host if request.client else None)
 
     buf.seek(0)
     return StreamingResponse(

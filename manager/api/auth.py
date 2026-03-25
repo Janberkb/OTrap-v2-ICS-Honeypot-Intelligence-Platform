@@ -131,12 +131,16 @@ async def login(
 
     user = await models.User.get_by_username(db, payload.username)
     if not user or not verify_bcrypt(payload.password, user.password_hash):
+        await write_audit(db, None, "login_failed",
+                          detail={"username": payload.username}, source_ip=ip)
         raise HTTPException(
             status_code=401,
             detail={"error": "INVALID_CREDENTIALS", "message": "Invalid username or password"},
         )
 
     if not user.is_active:
+        await write_audit(db, user, "login_failed",
+                          detail={"reason": "account_inactive"}, source_ip=ip)
         raise HTTPException(status_code=401, detail={"error": "INVALID_CREDENTIALS"})
 
     # Successful authentication resets the IP-based login limiter so routine
@@ -218,12 +222,16 @@ async def reauth(
     payload: ReauthRequest,
     request: Request,
     user: models.User = Depends(get_current_user),
+    db=Depends(get_db),
 ) -> dict:
+    ip = request.client.host if request.client else "unknown"
     if not verify_bcrypt(payload.password, user.password_hash):
+        await write_audit(db, user, "reauth_failed", source_ip=ip)
         raise HTTPException(status_code=403, detail={"error": "REAUTH_FAILED"})
 
     # Mark reauth in Redis for 5 minutes
     await request.app.state.redis.setex(f"reauth:{str(user.id)}", REAUTH_VALID_SEC, "1")
+    await write_audit(db, user, "reauth", source_ip=ip)
     return {"ok": True, "valid_for_seconds": REAUTH_VALID_SEC}
 
 

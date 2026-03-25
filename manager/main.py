@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import redis.asyncio as aioredis
 import grpc.aio
@@ -72,6 +73,10 @@ def create_app() -> FastAPI:
         analyzer_task = asyncio.create_task(analyzer.run())
         app.state.analyzer_task = analyzer_task
 
+        # ── Audit Retention Job ───────────────────────────────────────────────
+        retention_task = asyncio.create_task(_run_audit_retention(session_factory))
+        app.state.retention_task = retention_task
+
         # ── Initial admin user ────────────────────────────────────────────────
         await _ensure_initial_admin(session_factory, settings)
 
@@ -79,6 +84,7 @@ def create_app() -> FastAPI:
 
         # ── Shutdown ──────────────────────────────────────────────────────────
         analyzer_task.cancel()
+        retention_task.cancel()
         await grpc_server.stop(grace=5)
         await redis.aclose()
         await engine.dispose()
@@ -110,6 +116,26 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix="/api/v1")
 
     return app
+
+
+async def _run_audit_retention(session_factory) -> None:
+    """Daily background job: purge audit log entries older than configured retention window."""
+    from datetime import timedelta
+    from manager.db import models
+
+    while True:
+        await asyncio.sleep(24 * 3600)
+        try:
+            async with session_factory() as db:
+                cfg = await models.AppConfig.get(db)
+                days = cfg.audit_retention_days if cfg else 0
+                if days > 0:
+                    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+                    deleted = await models.AuditLog.purge_before(db, cutoff)
+                    await db.commit()
+                    logger.info("Audit retention: purged %d entries older than %d days", deleted, days)
+        except Exception as e:
+            logger.error("Audit retention job failed: %s", e)
 
 
 async def _ensure_initial_admin(session_factory, settings: Settings) -> None:

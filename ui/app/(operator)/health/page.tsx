@@ -10,6 +10,7 @@ interface ServiceHealth {
   detail?: string;
   fix?:    string;
   count?:  number;
+  total?:  number;
   sensors?: SensorStatus[];
 }
 
@@ -119,7 +120,12 @@ export default function HealthPage() {
               {key === "sensors" && svc.sensors && svc.sensors.length > 0 && (
                 <div className="mt-3 space-y-1.5">
                   <p className="text-xs font-semibold text-text-muted uppercase mb-2">
-                    Active Sensors ({svc.count})
+                    Sensors — {svc.count ?? svc.sensors.length} active
+                    {(svc.total ?? svc.sensors.length) > (svc.count ?? svc.sensors.length) && (
+                      <span className="text-severity-critical ml-1">
+                        / {svc.total ?? svc.sensors.length} total
+                      </span>
+                    )}
                   </p>
                   {svc.sensors.map((s) => (
                     <div key={s.id} className="flex items-center justify-between py-1.5 px-3 bg-bg-base rounded">

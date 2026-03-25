@@ -22,6 +22,8 @@ export default function AdminUsersPage() {
   const [reauthError,   setReauthError]   = useState("");
   const [form,          setForm]          = useState({ username: "", email: "", password: "", role: "user" });
   const [formError,     setFormError]     = useState("");
+  const [editForm,      setEditForm]      = useState({ email: "", role: "user", new_password: "" });
+  const [editError,     setEditError]     = useState("");
 
   async function load() {
     setLoading(true);
@@ -46,6 +48,31 @@ export default function AdminUsersPage() {
     }
     setShowForm(false);
     setForm({ username: "", email: "", password: "", role: "user" });
+    load();
+  }
+
+  function startEdit(u: OtrapUser) {
+    setEditTarget(u);
+    setEditForm({ email: u.email, role: u.role, new_password: "" });
+    setEditError("");
+  }
+
+  async function saveEdit() {
+    if (!editTarget) return;
+    setEditError("");
+    const body: Record<string, string> = { email: editForm.email, role: editForm.role };
+    if (editForm.new_password) body.new_password = editForm.new_password;
+    const r = await fetch(apiPath(`/admin/users/${editTarget.id}`), {
+      method: "PUT", credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": getCSRF() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const d = await r.json();
+      setEditError(d.detail?.message ?? d.detail?.error ?? "Failed to update user");
+      return;
+    }
+    setEditTarget(null);
     load();
   }
 
@@ -130,39 +157,80 @@ export default function AdminUsersPage() {
             {loading ? (
               <tr><td colSpan={6} className="text-center text-text-faint py-12">Loading…</td></tr>
             ) : users.map((u) => (
-              <tr key={u.id}>
-                <td>
-                  <div>
-                    <p className="font-semibold text-sm">{u.username}</p>
-                    <p className="text-xs text-text-muted">{u.email}</p>
-                  </div>
-                </td>
-                <td>
-                  <div className="flex items-center gap-1.5">
-                    {u.role === "superadmin"
-                      ? <><Shield className="w-3.5 h-3.5 text-accent" /><span className="text-xs text-accent font-semibold">Superadmin</span></>
-                      : <><User className="w-3.5 h-3.5 text-text-muted" /><span className="text-xs text-text-muted">Operator</span></>}
-                  </div>
-                </td>
-                <td>
-                  <button onClick={() => toggleActive(u)}
-                    className={`text-xs font-medium px-2 py-0.5 rounded transition-colors ${
-                      u.is_active
-                        ? "bg-green-900/30 text-severity-low hover:bg-red-900/30 hover:text-severity-critical"
-                        : "bg-red-900/30 text-severity-critical hover:bg-green-900/30 hover:text-severity-low"
-                    }`}>
-                    {u.is_active ? "Active" : "Disabled"}
-                  </button>
-                </td>
-                <td className="text-xs text-text-muted">{formatDateTime(u.last_login_at)}</td>
-                <td className="text-xs text-text-muted">{formatDateTime(u.created_at)}</td>
-                <td>
-                  <button onClick={() => startDelete(u)}
-                    className="text-text-faint hover:text-severity-critical transition-colors p-1">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </td>
-              </tr>
+              <>
+                <tr key={u.id}>
+                  <td>
+                    <div>
+                      <p className="font-semibold text-sm">{u.username}</p>
+                      <p className="text-xs text-text-muted">{u.email}</p>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-1.5">
+                      {u.role === "superadmin"
+                        ? <><Shield className="w-3.5 h-3.5 text-accent" /><span className="text-xs text-accent font-semibold">Superadmin</span></>
+                        : <><User className="w-3.5 h-3.5 text-text-muted" /><span className="text-xs text-text-muted">Operator</span></>}
+                    </div>
+                  </td>
+                  <td>
+                    <button onClick={() => toggleActive(u)}
+                      className={`text-xs font-medium px-2 py-0.5 rounded transition-colors ${
+                        u.is_active
+                          ? "bg-green-900/30 text-severity-low hover:bg-red-900/30 hover:text-severity-critical"
+                          : "bg-red-900/30 text-severity-critical hover:bg-green-900/30 hover:text-severity-low"
+                      }`}>
+                      {u.is_active ? "Active" : "Disabled"}
+                    </button>
+                  </td>
+                  <td className="text-xs text-text-muted">{formatDateTime(u.last_login_at)}</td>
+                  <td className="text-xs text-text-muted">{formatDateTime(u.created_at)}</td>
+                  <td>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => startEdit(u)}
+                        className="text-text-faint hover:text-accent transition-colors p-1">
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => startDelete(u)}
+                        className="text-text-faint hover:text-severity-critical transition-colors p-1">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {editTarget?.id === u.id && (
+                  <tr key={`${u.id}-edit`} className="bg-bg-elevated">
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="flex items-end gap-3 flex-wrap">
+                        <div>
+                          <label className="text-xs text-text-muted block mb-1">Email</label>
+                          <input
+                            className="input text-sm w-56"
+                            type="email"
+                            value={editForm.email}
+                            onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-xs text-text-muted block mb-1">Role</label>
+                          <select
+                            className="select text-sm"
+                            value={editForm.role}
+                            onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+                          >
+                            <option value="user">Operator</option>
+                            <option value="superadmin">Superadmin</option>
+                          </select>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={saveEdit} className="btn-primary text-xs px-3 py-1.5">Save</button>
+                          <button onClick={() => setEditTarget(null)} className="btn-secondary text-xs px-3 py-1.5">Cancel</button>
+                        </div>
+                        {editError && <p className="text-xs text-severity-critical">{editError}</p>}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </>
             ))}
           </tbody>
         </table>

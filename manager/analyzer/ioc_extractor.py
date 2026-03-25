@@ -28,9 +28,9 @@ def extract_iocs(ev: dict[str, Any]) -> list[dict[str, Any]]:
     event_type = ev.get("event_type", "")
     source_ip  = ev.get("source_ip", "")
 
-    # Always extract source IP as IOC for high-severity events
+    # Extract source IP as IOC for all non-noise events
     severity = ev.get("severity", "SEVERITY_NOISE")
-    if severity in ("SEVERITY_HIGH", "SEVERITY_CRITICAL") and source_ip:
+    if severity != "SEVERITY_NOISE" and source_ip:
         iocs.append({
             "type":       "ip",
             "value":      source_ip,

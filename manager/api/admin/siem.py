@@ -98,6 +98,9 @@ async def test_siem(
         db.add(log)
         await db.commit()
 
+        await write_audit(db, user, "test_siem",
+                          detail={"siem_type": cfg.siem_type, "http_status": status_code,
+                                  "result": "success" if status_code < 400 else "failed"})
         return {"ok": status_code < 400, "http_status": status_code}
     except Exception as e:
         log = models.SIEMDeliveryLog(
@@ -108,6 +111,8 @@ async def test_siem(
         )
         db.add(log)
         await db.commit()
+        await write_audit(db, user, "test_siem",
+                          detail={"siem_type": cfg.siem_type, "result": "failed", "error": str(e)})
         raise HTTPException(status_code=400, detail={"error": "SIEM_DELIVERY_FAILED", "detail": str(e)})
 
 

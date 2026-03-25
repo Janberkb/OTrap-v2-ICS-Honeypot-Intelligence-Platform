@@ -275,10 +275,16 @@ async def list_sensors(
             import json
             health = json.loads(health_raw)
 
+        # Derive effective status: a DB-active sensor with no health data is offline.
+        if s.status == "active":
+            effective_status = "active" if health else "offline"
+        else:
+            effective_status = s.status
+
         items.append({
             "id":           str(s.id),
             "name":         s.name,
-            "status":       s.status,
+            "status":       effective_status,
             "version":      s.version,
             "reported_ip":  s.reported_ip,
             "capabilities": s.capabilities,

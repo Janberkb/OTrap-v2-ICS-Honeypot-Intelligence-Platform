@@ -249,7 +249,7 @@ func (s *Server) dispatch(
 // ─── Response builders ─────────────────────────────────────────────────────
 
 func (s *Server) buildMBAP(txID uint16, unitID byte, pdu []byte) []byte {
-	frame := make([]byte, 6+len(pdu))
+	frame := make([]byte, 7+len(pdu)) // 6 MBAP header + 1 unit ID + len(pdu)
 	binary.BigEndian.PutUint16(frame[0:], txID)
 	binary.BigEndian.PutUint16(frame[2:], 0x0000) // Protocol ID = Modbus
 	binary.BigEndian.PutUint16(frame[4:], uint16(1+len(pdu)))

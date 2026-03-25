@@ -45,6 +45,14 @@ class UpdateUserRequest(BaseModel):
     role: str | None = None
     is_active: bool | None = None
     force_pw_reset: bool | None = None
+    new_password: str | None = None
+
+    @field_validator("new_password")
+    @classmethod
+    def pw_length(cls, v):
+        if v is not None and len(v) < 12:
+            raise ValueError("Password must be >= 12 chars")
+        return v
 
 
 @router.get("")
@@ -103,6 +111,8 @@ async def update_user(
         target.is_active = payload.is_active
     if payload.force_pw_reset is not None:
         target.force_pw_reset = payload.force_pw_reset
+    if payload.new_password is not None:
+        target.password_hash = hash_bcrypt(payload.new_password)
 
     target.updated_at = datetime.now(timezone.utc).isoformat()
     await db.commit()

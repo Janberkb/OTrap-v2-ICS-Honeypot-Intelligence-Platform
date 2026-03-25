@@ -11,7 +11,7 @@ from typing import Optional
 import bcrypt
 from sqlalchemy import (
     Boolean, Column, Float, ForeignKey, Index, Integer,
-    String, Text, UniqueConstraint, text, select, func, update
+    String, Text, UniqueConstraint, delete, text, select, func, update
 )
 from sqlalchemy.dialects.postgresql import (
     ARRAY, INET, JSONB, UUID as PGUUID
@@ -346,7 +346,8 @@ class IOC(Base):
         cls, db: AsyncSession,
         session_id, ioc_type: str, value: str,
         context: str | None = None, confidence: float = 1.0,
-    ) -> None:
+    ) -> bool:
+        """Returns True if a new IOC was inserted, False if an existing one was updated."""
         now = datetime.now(timezone.utc).isoformat()
         existing = await db.execute(
             select(cls).where(
@@ -359,6 +360,7 @@ class IOC(Base):
         if row:
             row.last_seen_at = now
             row.confidence   = max(row.confidence, confidence)
+            return False
         else:
             db.add(cls(
                 session_id=session_id,
@@ -367,6 +369,7 @@ class IOC(Base):
                 context=context,
                 confidence=confidence,
             ))
+            return True
 
     @classmethod
     async def list_for_session(cls, db: AsyncSession, session_id: str) -> list["IOC"]:
@@ -571,6 +574,42 @@ class AuditLog(Base):
             select(cls).order_by(cls.timestamp.desc()).limit(limit).offset(offset)
         )
         return list(result.scalars().all())
+
+    @classmethod
+    async def purge_before(cls, db: AsyncSession, before_iso: str) -> int:
+        """Delete all entries with timestamp < before_iso. Returns deleted row count."""
+        result = await db.execute(delete(cls).where(cls.timestamp < before_iso))
+        return result.rowcount
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# App Config (singleton row id=1 — application-level settings)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AppConfig(Base):
+    __tablename__ = "app_config"
+
+    id                    = Column(Integer, primary_key=True, default=1)
+    audit_retention_days  = Column(Integer, default=0)   # 0 = disabled
+    updated_at            = Column(Text, default=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    async def get(cls, db: AsyncSession) -> "AppConfig":
+        result = await db.execute(select(cls).where(cls.id == 1))
+        row = result.scalar_one_or_none()
+        if row is None:
+            row = cls(id=1)
+            db.add(row)
+            await db.flush()
+        return row
+
+    @classmethod
+    async def upsert(cls, db: AsyncSession, **kwargs) -> "AppConfig":
+        row = await cls.get(db)
+        for k, v in kwargs.items():
+            setattr(row, k, v)
+        row.updated_at = datetime.now(timezone.utc).isoformat()
+        return row
 
 
 # ─────────────────────────────────────────────────────────────────────────────
