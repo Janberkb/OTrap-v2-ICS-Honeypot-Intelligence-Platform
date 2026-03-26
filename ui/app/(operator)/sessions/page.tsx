@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Filter, Download, RefreshCw } from "lucide-react";
+import { Filter, Download, RefreshCw, ChevronUp, ChevronDown } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
@@ -38,20 +38,48 @@ const DEFAULT_FILTERS: Filters = {
   triage_status: "",
 };
 
+type SortDir = "asc" | "desc";
+const SORTABLE = ["severity", "event_count", "ioc_count", "duration_seconds", "started_at"];
+
 export default function SessionsPage() {
   const router = useRouter();
-  const [sessions,  setSessions]  = useState<any[]>([]);
-  const [total,     setTotal]     = useState(0);
-  const [page,      setPage]      = useState(0);
-  const [loading,   setLoading]   = useState(false);
-  const [filters,   setFilters]   = useState<Filters>(DEFAULT_FILTERS);
+  const [sessions,    setSessions]    = useState<any[]>([]);
+  const [total,       setTotal]       = useState(0);
+  const [page,        setPage]        = useState(0);
+  const [loading,     setLoading]     = useState(false);
+  const [filters,     setFilters]     = useState<Filters>(DEFAULT_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
+  const [sortBy,      setSortBy]      = useState("started_at");
+  const [sortDir,     setSortDir]     = useState<SortDir>("desc");
+  const [showExport,  setShowExport]  = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const PAGE_SIZE = 50;
 
+  // Close export dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setShowExport(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  function toggleSort(col: string) {
+    if (sortBy === col) {
+      setSortDir((d) => d === "desc" ? "asc" : "desc");
+    } else {
+      setSortBy(col);
+      setSortDir("desc");
+    }
+  }
+
   const loadSessions = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
+    const params = new URLSearchParams({
+      limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE),
+      sort_by: sortBy, sort_dir: sortDir,
+    });
     Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
 
     try {
@@ -63,17 +91,25 @@ export default function SessionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters, page]);
+  }, [filters, page, sortBy, sortDir]);
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
-  // Reset page when filters change
-  useEffect(() => { setPage(0); }, [filters]);
+  // Reset page when filters/sort change
+  useEffect(() => { setPage(0); }, [filters, sortBy, sortDir]);
 
-  async function exportCSV() {
+  function exportCSV() {
     const params = new URLSearchParams({ columns: "id,source_ip,severity,signal_tier,primary_protocol,cpu_stop_occurred,ioc_count,event_count,started_at,updated_at" });
     if (filters.severity) params.set("severity", filters.severity);
     window.open(apiPath(`/sessions/export/csv?${params.toString()}`), "_blank", "noopener,noreferrer");
+    setShowExport(false);
+  }
+
+  function exportJSON() {
+    const params = new URLSearchParams();
+    if (filters.severity) params.set("severity", filters.severity);
+    window.open(apiPath(`/sessions/export/json?${params.toString()}`), "_blank", "noopener,noreferrer");
+    setShowExport(false);
   }
 
   function setFilter(key: keyof Filters, val: string) {
@@ -98,10 +134,19 @@ export default function SessionsPage() {
               <span className="w-1.5 h-1.5 rounded-full bg-accent" />
             )}
           </button>
-          <button onClick={exportCSV} className="btn-secondary flex items-center gap-2">
-            <Download className="w-4 h-4" />
-            Export CSV
-          </button>
+          <div className="relative" ref={exportRef}>
+            <button onClick={() => setShowExport((s) => !s)} className="btn-secondary flex items-center gap-2">
+              <Download className="w-4 h-4" />
+              Export
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            {showExport && (
+              <div className="absolute right-0 mt-1 w-36 bg-bg-surface border border-bg-border rounded-lg shadow-xl z-20 overflow-hidden">
+                <button onClick={exportCSV} className="w-full text-left px-3 py-2 text-xs hover:bg-bg-elevated transition-colors">CSV</button>
+                <button onClick={exportJSON} className="w-full text-left px-3 py-2 text-xs hover:bg-bg-elevated transition-colors">JSON</button>
+              </div>
+            )}
+          </div>
           <button onClick={loadSessions} className="btn-secondary p-2">
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -189,14 +234,27 @@ export default function SessionsPage() {
             <thead>
               <tr>
                 <th>Source IP</th>
-                <th>Severity</th>
-                <th>Signal Tier</th>
-                <th>Protocol</th>
-                <th>Phase</th>
-                <th>Events</th>
-                <th>IOCs</th>
-                <th>Duration</th>
-                <th>Started</th>
+                {(["severity", "signal_tier", "protocol", "phase", "event_count", "ioc_count", "duration_seconds", "started_at"] as const).map((col) => {
+                  const labels: Record<string, string> = {
+                    severity: "Severity", signal_tier: "Signal Tier", protocol: "Protocol",
+                    phase: "Phase", event_count: "Events", ioc_count: "IOCs",
+                    duration_seconds: "Duration", started_at: "Started",
+                  };
+                  const sortable = SORTABLE.includes(col);
+                  return (
+                    <th key={col}
+                      className={sortable ? "cursor-pointer select-none hover:text-text-primary" : ""}
+                      onClick={sortable ? () => toggleSort(col) : undefined}
+                    >
+                      <span className="flex items-center gap-1">
+                        {labels[col]}
+                        {sortable && sortBy === col && (
+                          sortDir === "desc" ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />
+                        )}
+                      </span>
+                    </th>
+                  );
+                })}
                 <th>Status</th>
                 <th>Flags</th>
               </tr>

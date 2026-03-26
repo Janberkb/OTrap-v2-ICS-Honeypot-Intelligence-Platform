@@ -126,10 +126,29 @@ for key, value in defaults.items():
     if missing(data.get(key)):
         data[key] = value
 
-if missing(data.get("SENSOR_PUBLIC_MANAGER_ADDR")):
-    detected_ip = get_outbound_ip()
+import re as _re
+
+def is_plain_ip(s: str) -> bool:
+    return bool(_re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", s))
+
+detected_ip = get_outbound_ip()
+
+existing_addr = data.get("SENSOR_PUBLIC_MANAGER_ADDR", "")
+if missing(existing_addr):
+    # Fresh install — set from detected IP
     public_host = detected_ip if detected_ip and not detected_ip.startswith("127.") else "127.0.0.1"
     data["SENSOR_PUBLIC_MANAGER_ADDR"] = f"{public_host}:9443"
+else:
+    # Re-run — if the stored host is a plain IP and differs from current outbound IP, update it
+    stored_host = existing_addr.rsplit(":", 1)[0]
+    stored_port = existing_addr.rsplit(":", 1)[1] if ":" in existing_addr else "9443"
+    if is_plain_ip(stored_host) and detected_ip and stored_host != detected_ip:
+        print(f"[install_manager] Network IP changed: {stored_host} → {detected_ip}  (updating .env)", flush=True)
+        data["SENSOR_PUBLIC_MANAGER_ADDR"] = f"{detected_ip}:{stored_port}"
+        # Also refresh INSTALLER_BASE_URL_OVERRIDE if it contained the old IP
+        existing_installer = data.get("INSTALLER_BASE_URL_OVERRIDE", "")
+        if stored_host in existing_installer:
+            data["INSTALLER_BASE_URL_OVERRIDE"] = existing_installer.replace(stored_host, detected_ip)
 
 if missing(data.get("INSTALLER_BASE_URL_OVERRIDE")):
     try:

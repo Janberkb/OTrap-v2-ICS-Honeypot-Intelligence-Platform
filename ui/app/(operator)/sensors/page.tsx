@@ -1,17 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle,
+  ChevronDown,
+  ChevronRight,
   Copy,
+  Pencil,
   Plus,
   Terminal,
   Trash2,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
-import { HealthBadge, formatRelative, ReauthModal } from "@/components/ui";
+import { HealthBadge, SeverityBadge, formatRelative, ReauthModal } from "@/components/ui";
 import { apiPath, streamUrl } from "@/lib/api";
 
 type OnboardingPayload = {
@@ -32,6 +37,14 @@ type OnboardingPayload = {
   remote_ready: boolean;
 };
 
+const TRIAGE_BADGE: Record<string, string> = {
+  new:            "badge-noise",
+  investigating:  "badge-warning",
+  reviewed:       "badge-success",
+  false_positive: "text-text-faint text-xs",
+  escalated:      "badge-critical",
+};
+
 function getCSRF(): string {
   return document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
 }
@@ -43,12 +56,13 @@ async function readErrorMessage(response: Response): Promise<string> {
     if (typeof data?.detail?.message === "string") return data.detail.message;
     if (typeof data?.detail?.error === "string") return data.detail.error;
   } catch {
-    // Ignore non-JSON errors and fall back to status text.
+    // ignore
   }
   return `Request failed (${response.status})`;
 }
 
 export default function SensorsPage() {
+  const router = useRouter();
   const [sensors,       setSensors]       = useState<any[]>([]);
   const [user,          setUser]          = useState<any>(null);
   const [loading,       setLoading]       = useState(true);
@@ -64,6 +78,15 @@ export default function SensorsPage() {
   const [reauthLoading, setReauthLoading] = useState(false);
   const [reauthError,   setReauthError]   = useState("");
 
+  // D1: inline rename
+  const [editingId,   setEditingId]   = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+
+  // D2: expand sessions
+  const [expandedId,       setExpandedId]       = useState<string | null>(null);
+  const [expandedSessions, setExpandedSessions] = useState<any[]>([]);
+  const [sessionsLoading,  setSessionsLoading]  = useState(false);
+
   async function load() {
     setLoading(true);
     const [sensorRes, meRes] = await Promise.all([
@@ -75,45 +98,27 @@ export default function SensorsPage() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    void load();
-  }, []);
+  useEffect(() => { void load(); }, []);
 
   // SSE: react instantly to sensor health changes without polling
   useEffect(() => {
     const es = new EventSource(streamUrl(), { withCredentials: true });
-
     es.addEventListener("health_update", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data as string);
         if (!data.sensor_id) return;
-
         setSensors((prev) =>
           prev.map((s) => {
             if (s.id !== data.sensor_id) return s;
-            if (data.status === "offline") {
-              return { ...s, status: "offline", health: null };
-            }
-            if (data.status === "active") {
-              return { ...s, status: "active" };
-            }
-            // Heartbeat data — update health metrics in-place
-            if (data.cpu_percent !== undefined) {
-              return { ...s, health: { ...(s.health ?? {}), ...data } };
-            }
+            if (data.status === "offline") return { ...s, status: "offline", health: null };
+            if (data.status === "active")  return { ...s, status: "active" };
+            if (data.cpu_percent !== undefined) return { ...s, health: { ...(s.health ?? {}), ...data } };
             return s;
           })
         );
-      } catch {
-        // ignore malformed events
-      }
+      } catch { /* ignore */ }
     });
-
-    es.onerror = () => {
-      // SSE dropped — fall back to a one-off reload so state stays accurate
-      void load();
-    };
-
+    es.onerror = () => { void load(); };
     return () => es.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -122,14 +127,12 @@ export default function SensorsPage() {
     if (!newName.trim()) return;
     setGenerating(true);
     setFormError("");
-
     const r = await fetch(apiPath("/sensors/token"), {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": getCSRF() },
       body: JSON.stringify({ sensor_name: newName.trim() }),
     });
-
     if (r.ok) {
       const data = await r.json();
       if (!data?.join_token || !data?.sensor_id) {
@@ -145,8 +148,50 @@ export default function SensorsPage() {
     } else {
       setFormError(await readErrorMessage(r));
     }
-
     setGenerating(false);
+  }
+
+  // D1 — rename
+  function startEdit(s: any) {
+    setEditingId(s.id);
+    setEditingName(s.name);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingName("");
+  }
+
+  async function saveRename(sensorId: string) {
+    const name = editingName.trim();
+    if (!name) return;
+    const r = await fetch(apiPath(`/sensors/${sensorId}`), {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": getCSRF() },
+      body: JSON.stringify({ name }),
+    });
+    if (r.ok) {
+      setSensors((prev) => prev.map((s) => s.id === sensorId ? { ...s, name } : s));
+      cancelEdit();
+    }
+  }
+
+  // D2 — expand sessions
+  async function toggleExpand(sensorId: string) {
+    if (expandedId === sensorId) {
+      setExpandedId(null);
+      setExpandedSessions([]);
+      return;
+    }
+    setExpandedId(sensorId);
+    setSessionsLoading(true);
+    const r = await fetch(apiPath(`/sensors/${sensorId}/sessions?limit=10`), { credentials: "include" });
+    if (r.ok) {
+      const d = await r.json();
+      setExpandedSessions(d.items ?? []);
+    }
+    setSessionsLoading(false);
   }
 
   async function doReauth(password: string) {
@@ -157,11 +202,7 @@ export default function SensorsPage() {
       headers: { "Content-Type": "application/json", "X-CSRF-Token": getCSRF() },
       body: JSON.stringify({ password }),
     });
-    if (!r.ok) {
-      setReauthError("Invalid password");
-      setReauthLoading(false);
-      return;
-    }
+    if (!r.ok) { setReauthError("Invalid password"); setReauthLoading(false); return; }
     setReauthOpen(false);
     setReauthLoading(false);
     await Promise.all(revokeTargets.map((id) => doRevoke(id)));
@@ -170,15 +211,8 @@ export default function SensorsPage() {
     void load();
   }
 
-  function startRevoke(sensorId: string) {
-    setRevokeTargets([sensorId]);
-    setReauthOpen(true);
-  }
-
-  function startBulkRevoke() {
-    setRevokeTargets([...selected]);
-    setReauthOpen(true);
-  }
+  function startRevoke(sensorId: string) { setRevokeTargets([sensorId]); setReauthOpen(true); }
+  function startBulkRevoke() { setRevokeTargets([...selected]); setReauthOpen(true); }
 
   async function doRevoke(sensorId: string) {
     await fetch(apiPath(`/sensors/${sensorId}`), {
@@ -188,20 +222,12 @@ export default function SensorsPage() {
   }
 
   function toggleSelect(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }
-
   function toggleSelectAll() {
     const deletable = sensors.filter((s) => s.status !== "revoked").map((s) => s.id);
-    setSelected((prev) =>
-      prev.size === deletable.length ? new Set() : new Set(deletable)
-    );
+    setSelected((prev) => prev.size === deletable.length ? new Set() : new Set(deletable));
   }
-
   function copyValue(field: "token" | "install" | "command" | "env", text: string) {
     void navigator.clipboard.writeText(text);
     setCopiedField(field);
@@ -209,6 +235,7 @@ export default function SensorsPage() {
   }
 
   const isAdmin = user?.role === "superadmin";
+  const colCount = isAdmin ? 9 : 7;
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
@@ -292,7 +319,6 @@ export default function SensorsPage() {
             </div>
           )}
 
-          {/* PRIMARY: single-command installer */}
           {newPayload.installer_command && (
             <div className="rounded-md border-2 border-accent/50 bg-bg-base/70 p-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
@@ -305,9 +331,7 @@ export default function SensorsPage() {
                   onClick={() => copyValue("install", newPayload.installer_command!)}
                   className="btn-primary flex items-center gap-1.5 text-xs whitespace-nowrap"
                 >
-                  {copiedField === "install"
-                    ? <CheckCircle className="w-3.5 h-3.5" />
-                    : <Copy className="w-3.5 h-3.5" />}
+                  {copiedField === "install" ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   {copiedField === "install" ? "Copied!" : "Copy"}
                 </button>
               </div>
@@ -321,46 +345,29 @@ export default function SensorsPage() {
             </div>
           )}
 
-          {/* ADVANCED: pre-built image, join token, compose */}
           <details className="rounded-md border border-bg-border bg-bg-base/70 p-4">
             <summary className="cursor-pointer list-none font-semibold text-sm flex items-center gap-2">
               <span>Advanced options</span>
               <span className="text-xs text-text-faint">(pre-built image / join token / compose)</span>
             </summary>
             <div className="mt-4 space-y-4">
-
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase text-text-faint">Docker run (pre-built image)</p>
-                  <button
-                    onClick={() => copyValue("command", newPayload.deployment_command)}
-                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
-                  >
-                    {copiedField === "command"
-                      ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
-                      : <Copy className="w-3.5 h-3.5" />}
+                  <button onClick={() => copyValue("command", newPayload.deployment_command)} className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap">
+                    {copiedField === "command" ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" /> : <Copy className="w-3.5 h-3.5" />}
                     {copiedField === "command" ? "Copied!" : "Copy"}
                   </button>
                 </div>
                 <pre className="font-mono text-xs bg-bg-base border border-bg-border rounded px-3 py-3 text-severity-low whitespace-pre-wrap break-all overflow-x-auto">
                   {newPayload.deployment_command}
                 </pre>
-                <p className="text-xs text-text-faint">
-                  Use this only if you have already built and pushed the sensor image to a registry.
-                  Set <code className="text-accent">SENSOR_IMAGE_REF</code> in .env before generating.
-                </p>
               </div>
-
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase text-text-faint">Join Token (single-use)</p>
-                  <button
-                    onClick={() => copyValue("token", newPayload.join_token)}
-                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
-                  >
-                    {copiedField === "token"
-                      ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
-                      : <Copy className="w-3.5 h-3.5" />}
+                  <button onClick={() => copyValue("token", newPayload.join_token)} className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap">
+                    {copiedField === "token" ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" /> : <Copy className="w-3.5 h-3.5" />}
                     {copiedField === "token" ? "Copied!" : "Copy"}
                   </button>
                 </div>
@@ -369,17 +376,11 @@ export default function SensorsPage() {
                 </code>
                 <p className="text-xs text-text-faint">{newPayload.warning}</p>
               </div>
-
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase text-text-faint">.env.sensor (Docker Compose path)</p>
-                  <button
-                    onClick={() => copyValue("env", newPayload.env_file_snippet)}
-                    className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap"
-                  >
-                    {copiedField === "env"
-                      ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" />
-                      : <Copy className="w-3.5 h-3.5" />}
+                  <button onClick={() => copyValue("env", newPayload.env_file_snippet)} className="btn-secondary flex items-center gap-1.5 text-xs whitespace-nowrap">
+                    {copiedField === "env" ? <CheckCircle className="w-3.5 h-3.5 text-severity-low" /> : <Copy className="w-3.5 h-3.5" />}
                     {copiedField === "env" ? "Copied!" : "Copy"}
                   </button>
                 </div>
@@ -391,7 +392,6 @@ export default function SensorsPage() {
                   {newPayload.compose_command}
                 </pre>
               </div>
-
             </div>
           </details>
         </div>
@@ -410,16 +410,8 @@ export default function SensorsPage() {
         <table className="data-table">
           <thead>
             <tr>
-              {isAdmin && (
-                <th className="w-8">
-                  <input
-                    type="checkbox"
-                    className="accent-accent"
-                    checked={selected.size > 0 && selected.size === sensors.filter((s) => s.status !== "revoked").length}
-                    onChange={toggleSelectAll}
-                  />
-                </th>
-              )}
+              <th className="w-6"></th>
+              {isAdmin && <th className="w-8"><input type="checkbox" className="accent-accent" checked={selected.size > 0 && selected.size === sensors.filter((s) => s.status !== "revoked").length} onChange={toggleSelectAll} /></th>}
               <th>Status</th>
               <th>Name</th>
               <th>IP</th>
@@ -431,10 +423,10 @@ export default function SensorsPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={isAdmin ? 8 : 6} className="text-center text-text-faint py-12">Loading…</td></tr>
+              <tr><td colSpan={colCount} className="text-center text-text-faint py-12">Loading…</td></tr>
             ) : sensors.length === 0 ? (
               <tr>
-                <td colSpan={isAdmin ? 8 : 6} className="py-12">
+                <td colSpan={colCount} className="py-12">
                   <div className="text-center text-text-faint">
                     <Wifi className="w-10 h-10 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">No sensors registered</p>
@@ -443,51 +435,141 @@ export default function SensorsPage() {
                 </td>
               </tr>
             ) : sensors.map((s) => (
-              <tr key={s.id} className={selected.has(s.id) ? "bg-red-900/5" : ""}>
-                {isAdmin && (
-                  <td className="w-8">
-                    {s.status !== "revoked" && (
-                      <input
-                        type="checkbox"
-                        className="accent-accent"
-                        checked={selected.has(s.id)}
-                        onChange={() => toggleSelect(s.id)}
-                      />
-                    )}
+              <>
+                <tr key={s.id} className={selected.has(s.id) ? "bg-red-900/5" : ""}>
+                  {/* D2: expand toggle */}
+                  <td className="w-6">
+                    <button
+                      onClick={() => void toggleExpand(s.id)}
+                      className="text-text-faint hover:text-text-primary transition-colors p-1"
+                      title="Show sessions"
+                    >
+                      {expandedId === s.id
+                        ? <ChevronDown className="w-3.5 h-3.5" />
+                        : <ChevronRight className="w-3.5 h-3.5" />}
+                    </button>
                   </td>
-                )}
-                <td>
-                  <div className="flex items-center gap-2">
-                    {s.status === "active"
-                      ? <Wifi className="w-3.5 h-3.5 text-severity-low" />
-                      : <WifiOff className="w-3.5 h-3.5 text-text-faint" />}
-                    <HealthBadge status={s.status === "active" ? (s.health ? "healthy" : "degraded") : s.status} />
-                  </div>
-                </td>
-                <td className="font-semibold">{s.name}</td>
-                <td className="font-mono text-xs">{s.reported_ip ?? "—"}</td>
-                <td className="text-xs text-text-muted">{s.version ?? "—"}</td>
-                <td>
-                  <div className="flex gap-1 flex-wrap">
-                    {(s.capabilities ?? []).map((cap: string) => (
-                      <span key={cap} className="badge-noise uppercase">{cap}</span>
-                    ))}
-                  </div>
-                </td>
-                <td className="text-xs text-text-muted">{formatRelative(s.last_seen_at)}</td>
-                {isAdmin && (
+                  {isAdmin && (
+                    <td className="w-8">
+                      {s.status !== "revoked" && (
+                        <input type="checkbox" className="accent-accent" checked={selected.has(s.id)} onChange={() => toggleSelect(s.id)} />
+                      )}
+                    </td>
+                  )}
                   <td>
-                    {s.status !== "revoked" && (
-                      <button
-                        onClick={() => startRevoke(s.id)}
-                        className="text-text-faint hover:text-severity-critical transition-colors p-1"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                    <div className="flex items-center gap-2">
+                      {s.status === "active"
+                        ? <Wifi className="w-3.5 h-3.5 text-severity-low" />
+                        : <WifiOff className="w-3.5 h-3.5 text-text-faint" />}
+                      <HealthBadge status={s.status === "active" ? (s.health ? "healthy" : "degraded") : s.status} />
+                    </div>
+                  </td>
+                  {/* D1: inline name edit */}
+                  <td className="font-semibold">
+                    {editingId === s.id ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          className="input text-xs py-0.5 px-2 h-7 w-40"
+                          value={editingName}
+                          onChange={(e) => setEditingName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveRename(s.id);
+                            if (e.key === "Escape") cancelEdit();
+                          }}
+                          autoFocus
+                        />
+                        <button onClick={() => void saveRename(s.id)} className="text-severity-low hover:opacity-80 p-0.5" title="Save">
+                          <CheckCircle className="w-4 h-4" />
+                        </button>
+                        <button onClick={cancelEdit} className="text-text-faint hover:text-text-primary p-0.5" title="Cancel">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 group">
+                        <span>{s.name}</span>
+                        {isAdmin && (
+                          <button
+                            onClick={() => startEdit(s)}
+                            className="opacity-0 group-hover:opacity-100 text-text-faint hover:text-text-primary transition-all p-0.5"
+                            title="Rename sensor"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </td>
+                  <td className="font-mono text-xs">{s.reported_ip ?? "—"}</td>
+                  <td className="text-xs text-text-muted">{s.version ?? "—"}</td>
+                  <td>
+                    <div className="flex gap-1 flex-wrap">
+                      {(s.capabilities ?? []).map((cap: string) => (
+                        <span key={cap} className="badge-noise uppercase">{cap}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="text-xs text-text-muted">{formatRelative(s.last_seen_at)}</td>
+                  {isAdmin && (
+                    <td>
+                      {s.status !== "revoked" && (
+                        <button onClick={() => startRevoke(s.id)} className="text-text-faint hover:text-severity-critical transition-colors p-1">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+
+                {/* D2: expanded sessions row */}
+                {expandedId === s.id && (
+                  <tr key={`${s.id}-sessions`} className="bg-bg-surface/50">
+                    <td colSpan={colCount} className="px-6 py-3">
+                      {sessionsLoading ? (
+                        <p className="text-xs text-text-faint">Loading sessions…</p>
+                      ) : expandedSessions.length === 0 ? (
+                        <p className="text-xs text-text-faint">No sessions from this sensor yet.</p>
+                      ) : (
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold text-text-muted uppercase mb-2">Recent Sessions</p>
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-text-faint">
+                                <th className="text-left pb-1 font-normal">Source IP</th>
+                                <th className="text-left pb-1 font-normal">Protocol</th>
+                                <th className="text-left pb-1 font-normal">Severity</th>
+                                <th className="text-left pb-1 font-normal">Events</th>
+                                <th className="text-left pb-1 font-normal">Triage</th>
+                                <th className="text-left pb-1 font-normal">Started</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {expandedSessions.map((sess) => (
+                                <tr
+                                  key={sess.id}
+                                  className="cursor-pointer hover:bg-bg-border/30 transition-colors"
+                                  onClick={() => router.push(`/sessions/${sess.id}`)}
+                                >
+                                  <td className="font-mono py-0.5 pr-4">{sess.source_ip}</td>
+                                  <td className="uppercase pr-4">{sess.primary_protocol ?? "—"}</td>
+                                  <td className="pr-4"><SeverityBadge severity={sess.severity} /></td>
+                                  <td className="pr-4">{sess.event_count}</td>
+                                  <td className="pr-4">
+                                    <span className={TRIAGE_BADGE[sess.triage_status] ?? "badge-noise"}>
+                                      {sess.triage_status.replace("_", " ")}
+                                    </span>
+                                  </td>
+                                  <td className="text-text-muted">{sess.started_at ? new Date(sess.started_at).toLocaleString() : "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
                 )}
-              </tr>
+              </>
             ))}
           </tbody>
         </table>
@@ -502,12 +584,7 @@ export default function SensorsPage() {
                 s.health?.port_status?.find((p: any) => p.port === port && p.listening),
               );
               return (
-                <div
-                  key={port}
-                  className={`rounded-md p-3 text-center border ${
-                    active ? "border-severity-low/30 bg-green-900/10" : "border-bg-border bg-bg-surface"
-                  }`}
-                >
+                <div key={port} className={`rounded-md p-3 text-center border ${active ? "border-severity-low/30 bg-green-900/10" : "border-bg-border bg-bg-surface"}`}>
                   <p className={`text-lg font-bold font-mono ${active ? "text-severity-low" : "text-text-faint"}`}>{port}</p>
                   <p className="text-xs text-text-muted">
                     {port === 102 ? "S7comm" : port === 502 ? "Modbus" : port === 80 ? "HMI HTTP" : "HMI HTTPS"}

@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import uuid as uuid_mod
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -45,6 +48,8 @@ async def list_sessions(
     from_dt:       str | None = Query(None),
     to_dt:         str | None = Query(None),
     triage_status: str | None = Query(None),
+    sort_by:       str | None = Query(None),
+    sort_dir:      str | None = Query(None),
     limit:         int = Query(100, ge=1, le=1000),
     offset:        int = Query(0, ge=0),
     db=Depends(get_db),
@@ -58,6 +63,7 @@ async def list_sessions(
         is_actionable=is_actionable,
         from_dt=from_dt, to_dt=to_dt,
         triage_status=triage_status,
+        sort_by=sort_by, sort_dir=sort_dir,
         limit=limit, offset=offset,
     )
     return {
@@ -106,6 +112,27 @@ async def sessions_stats(
         "sessions_today": int(sessions_today),
         "unique_ips_24h": int(unique_ips),
     }
+
+
+@router.get("/export/json")
+async def export_sessions_json(
+    request: Request,
+    severity: str | None = Query(None),
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> StreamingResponse:
+    sessions, _ = await models.Session.list_filtered(db, severity=severity, limit=10000)
+    data = json.dumps([_session_summary(s) for s in sessions], default=str, indent=2)
+
+    await write_audit(db, user, "export_sessions",
+                      detail={"format": "json", "row_count": len(sessions), "severity_filter": severity},
+                      source_ip=request.client.host if request.client else None)
+
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=sessions.json"},
+    )
 
 
 @router.get("/export/csv")
@@ -212,6 +239,72 @@ async def get_session_iocs(
         }
         for i in iocs
     ]}
+
+
+@router.get("/{session_id}/export/stix")
+async def export_session_stix(
+    session_id: str,
+    request: Request,
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> StreamingResponse:
+    """Export a STIX 2.1 bundle for all IOCs in the session."""
+    from sqlalchemy import select
+    result = await db.execute(select(models.Session).where(models.Session.id == session_id))
+    sess = result.scalar_one_or_none()
+    if not sess:
+        raise HTTPException(404, {"error": "NOT_FOUND"})
+
+    iocs = await models.IOC.list_for_session(db, session_id)
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    started = (sess.started_at or now_iso)
+
+    stix_objects = []
+    for ioc in iocs:
+        if ioc.ioc_type == "ip":
+            pattern = f"[ipv4-addr:value = '{ioc.value}']"
+        elif ioc.ioc_type == "domain":
+            pattern = f"[domain-name:value = '{ioc.value}']"
+        elif ioc.ioc_type == "url":
+            pattern = f"[url:value = '{ioc.value}']"
+        elif ioc.ioc_type == "hash_md5":
+            pattern = f"[file:hashes.MD5 = '{ioc.value}']"
+        elif ioc.ioc_type == "hash_sha256":
+            pattern = f"[file:hashes.'SHA-256' = '{ioc.value}']"
+        else:
+            pattern = f"[artifact:payload_bin = '{ioc.value}']"
+
+        stix_objects.append({
+            "type":          "indicator",
+            "spec_version":  "2.1",
+            "id":            f"indicator--{uuid_mod.uuid4()}",
+            "created":       now_iso,
+            "modified":      now_iso,
+            "name":          f"OTrap: {ioc.ioc_type} IOC from session {session_id[:8]}",
+            "description":   ioc.context or f"Observed {ioc.ioc_type}: {ioc.value}",
+            "pattern":       pattern,
+            "pattern_type":  "stix",
+            "valid_from":    started if started.endswith("Z") else started.replace("+00:00", "Z"),
+            "confidence":    ioc.confidence or 75,
+            "labels":        ["malicious-activity"],
+        })
+
+    bundle = {
+        "type":         "bundle",
+        "id":           f"bundle--{uuid_mod.uuid4()}",
+        "spec_version": "2.1",
+        "objects":      stix_objects,
+    }
+
+    await write_audit(db, user, "export_sessions",
+                      detail={"format": "stix", "session_id": session_id, "ioc_count": len(stix_objects)},
+                      source_ip=request.client.host if request.client else None)
+
+    return StreamingResponse(
+        iter([json.dumps(bundle, indent=2)]),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=session-{session_id[:8]}-stix.json"},
+    )
 
 
 @router.get("/{session_id}/artifacts")

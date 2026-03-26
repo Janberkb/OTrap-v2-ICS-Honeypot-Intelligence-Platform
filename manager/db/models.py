@@ -194,9 +194,12 @@ class Session(Base):
         from_dt: str | None = None,
         to_dt: str | None = None,
         triage_status: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list["Session"], int]:
+        from sqlalchemy import case as sa_case
         q = select(cls)
         if severity:
             q = q.where(cls.severity == severity)
@@ -219,9 +222,26 @@ class Session(Base):
         if triage_status:
             q = q.where(cls.triage_status == triage_status)
 
+        severity_order = sa_case(
+            (cls.severity == "critical", 4),
+            (cls.severity == "high", 3),
+            (cls.severity == "medium", 2),
+            (cls.severity == "low", 1),
+            else_=0,
+        )
+        _SORT_COLS = {
+            "severity":         severity_order,
+            "event_count":      cls.event_count,
+            "ioc_count":        cls.ioc_count,
+            "duration_seconds": cls.duration_seconds,
+            "started_at":       cls.started_at,
+        }
+        sort_col = _SORT_COLS.get(sort_by or "started_at", cls.started_at)
+        order_expr = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
+
         count_q = select(func.count()).select_from(q.subquery())
         total   = (await session.execute(count_q)).scalar_one()
-        rows    = (await session.execute(q.order_by(cls.started_at.desc()).limit(limit).offset(offset))).scalars().all()
+        rows    = (await session.execute(q.order_by(order_expr).limit(limit).offset(offset))).scalars().all()
         return list(rows), total
 
 

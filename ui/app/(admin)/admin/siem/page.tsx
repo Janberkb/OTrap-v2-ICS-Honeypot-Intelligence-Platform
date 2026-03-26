@@ -18,6 +18,7 @@ export default function SIEMPage() {
   const [testing,      setTesting]      = useState(false);
   const [testResult,   setTestResult]   = useState<{ ok: boolean; message: string } | null>(null);
   const [showToken,    setShowToken]    = useState(false);
+  const isSyslog = form.siem_type === "syslog_cef";
   const [reauthOpen,   setReauthOpen]   = useState(false);
   const [reauthLoading,setReauthLoading]= useState(false);
   const [reauthError,  setReauthError]  = useState("");
@@ -105,6 +106,7 @@ export default function SIEMPage() {
             <select className="select" value={f("siem_type")} onChange={e => set("siem_type", e.target.value)}>
               <option value="splunk_hec">Splunk HEC</option>
               <option value="webhook">Generic Webhook</option>
+              <option value="syslog_cef">Syslog (CEF)</option>
             </select>
           </div>
           <div><label>Minimum Severity</label>
@@ -112,19 +114,25 @@ export default function SIEMPage() {
               {["low","medium","high","critical"].map(s => <option key={s} value={s} className="capitalize">{s}</option>)}
             </select>
           </div>
-          <div className="col-span-2"><label>Endpoint URL</label>
-            <input className="input" value={f("url")} onChange={e => set("url", e.target.value)} placeholder="https://splunk.example.com:8088/services/collector/event" /></div>
           <div className="col-span-2">
-            <label>{form.siem_type === "splunk_hec" ? "HEC Token" : "Bearer Token"}</label>
-            <div className="relative">
-              <input className="input pr-9" type={showToken ? "text" : "password"}
-                value={f("token")} onChange={e => set("token", e.target.value)}
-                placeholder={cfg.configured ? "Leave blank to keep existing" : ""} />
-              <button type="button" onClick={() => setShowToken(v => !v)} className="absolute right-2 top-2 text-text-faint hover:text-text-primary">
-                {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
+            <label>{isSyslog ? "Syslog Host:Port" : "Endpoint URL"}</label>
+            <input className="input" value={f("url")} onChange={e => set("url", e.target.value)}
+              placeholder={isSyslog ? "192.168.1.100:514" : "https://splunk.example.com:8088/services/collector/event"} />
+            {isSyslog && <p className="text-xs text-text-faint mt-1">UDP syslog with CEF format. Default port: 514.</p>}
           </div>
+          {!isSyslog && (
+            <div className="col-span-2">
+              <label>{form.siem_type === "splunk_hec" ? "HEC Token" : "Bearer Token (optional)"}</label>
+              <div className="relative">
+                <input className="input pr-9" type={showToken ? "text" : "password"}
+                  value={f("token")} onChange={e => set("token", e.target.value)}
+                  placeholder={cfg.configured ? "Leave blank to keep existing" : ""} />
+                <button type="button" onClick={() => setShowToken(v => !v)} className="absolute right-2 top-2 text-text-faint hover:text-text-primary">
+                  {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

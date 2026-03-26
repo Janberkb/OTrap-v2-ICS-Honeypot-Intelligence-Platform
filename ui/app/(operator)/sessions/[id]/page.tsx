@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronLeft, Zap, Shield, Clock, Activity } from "lucide-react";
+import { ChevronLeft, Zap, Shield, Clock, Activity, Download } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
@@ -85,6 +85,16 @@ export default function SessionDetailPage() {
           </div>
           <p className="text-xs text-text-muted mt-1 font-mono">Session {session.id}</p>
         </div>
+        {session.ioc_count > 0 && (
+          <a
+            href={apiPath(`/sessions/${session.id}/export/stix`)}
+            target="_blank" rel="noopener noreferrer"
+            className="btn-secondary flex items-center gap-1.5 text-xs"
+            title="Export IOCs as STIX 2.1 bundle"
+          >
+            <Download className="w-3.5 h-3.5" />STIX
+          </a>
+        )}
       </div>
 
       {/* Meta cards */}

@@ -31,12 +31,13 @@ async def maybe_send_smtp(db, ev: dict, session: models.Session) -> None:
     if not is_cpu_stop and SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(min_sev, 0):
         return
 
-    # Cooldown check (Redis key per source_ip)
+    # Cooldown check (Redis key per source_ip+severity — CPU STOP always bypasses)
     try:
         import redis.asyncio as aioredis, os
         r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-        cooldown_key = f"smtp.cooldown:{session.source_ip}"
+        cooldown_key = f"smtp.cooldown:{session.source_ip}:{severity}"
         if await r.exists(cooldown_key) and not is_cpu_stop:
+            await r.aclose()
             return
         await r.setex(cooldown_key, cfg.cooldown_seconds, "1")
         await r.aclose()

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import delete, select
@@ -448,6 +448,70 @@ async def get_sensor_installer(sensor_id: str, request: Request) -> Response:
         media_type="text/x-shellscript",
         headers={"Content-Disposition": f'inline; filename="install-{slug}.sh"'},
     )
+
+
+class RenameSensorRequest(BaseModel):
+    name: str
+
+
+@router.patch("/{sensor_id}")
+async def rename_sensor(
+    sensor_id: str,
+    payload: RenameSensorRequest,
+    request: Request,
+    db=Depends(get_db),
+    user=Depends(require_admin),
+) -> dict:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(400, {"error": "NAME_REQUIRED", "message": "Sensor name cannot be empty."})
+
+    result = await db.execute(select(models.Sensor).where(models.Sensor.id == uuid.UUID(sensor_id)))
+    sensor = result.scalar_one_or_none()
+    if not sensor:
+        raise HTTPException(404, {"error": "NOT_FOUND"})
+
+    sensor.name = name
+    await db.commit()
+
+    await write_audit(
+        db, user,
+        action="rename_sensor",
+        target_type="sensor",
+        target_id=sensor_id,
+        detail={"new_name": name},
+        source_ip=request.client.host if request.client else None,
+    )
+    return {"id": sensor_id, "name": name}
+
+
+@router.get("/{sensor_id}/sessions")
+async def sensor_sessions(
+    sensor_id: str,
+    limit: int = Query(10, ge=1, le=50),
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict:
+    result = await db.execute(
+        select(models.Session)
+        .where(models.Session.sensor_id == uuid.UUID(sensor_id))
+        .order_by(models.Session.started_at.desc())
+        .limit(limit)
+    )
+    sessions = result.scalars().all()
+    return {"items": [_sess(s) for s in sessions]}
+
+
+def _sess(s: models.Session) -> dict:
+    return {
+        "id":               str(s.id),
+        "source_ip":        s.source_ip,
+        "primary_protocol": s.primary_protocol,
+        "severity":         s.severity,
+        "event_count":      s.event_count,
+        "started_at":       s.started_at,
+        "triage_status":    getattr(s, "triage_status", None) or "new",
+    }
 
 
 @router.delete("/{sensor_id}")

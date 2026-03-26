@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/brand-mark";
 import {
   LayoutDashboard, Shield, Activity, Radio,
   Settings, LogOut, Users, Database, FileText,
-  WifiOff, KeyRound, X
+  WifiOff, KeyRound, X, Bell
 } from "lucide-react";
 
 // ─── Live Stream Context ────────────────────────────────────────────────────
@@ -97,6 +97,8 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
   const [stats,       setStats]       = useState<StatsData | null>(null);
   const [connected,   setConnected]   = useState(false);
   const [showChgPw,   setShowChgPw]   = useState(false);
+  const [bellOpen,    setBellOpen]    = useState(false);
+  const [seenCount,   setSeenCount]   = useState(0);
   const [chgPwForm,   setChgPwForm]   = useState({ current: "", next: "", confirm: "" });
   const [chgPwError,  setChgPwError]  = useState("");
   const [chgPwOk,     setChgPwOk]     = useState(false);
@@ -299,8 +301,64 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
         </aside>
 
         {/* ── Main content ────────────────────────────────────────────── */}
-        <main className="flex-1 overflow-y-auto">
-          {children}
+        <main className="flex-1 overflow-y-auto flex flex-col">
+          {/* Notification bar */}
+          {(() => {
+            const criticalEvents = events.filter((e) => e.severity === "critical" || e.severity === "high");
+            const unreadCount = Math.max(0, criticalEvents.length - seenCount);
+            return (
+              <div className="flex-shrink-0 flex items-center justify-end px-4 py-1.5 border-b border-bg-border bg-bg-surface sticky top-0 z-10">
+                <div className="relative">
+                  <button
+                    onClick={() => { setBellOpen((o) => !o); setSeenCount(criticalEvents.length); }}
+                    className="relative p-1.5 rounded-md text-text-faint hover:text-text-primary hover:bg-bg-elevated transition-colors"
+                    title="Alerts"
+                  >
+                    <Bell className="w-4 h-4" />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 text-[10px] font-bold bg-severity-critical text-white rounded-full flex items-center justify-center px-0.5">
+                        {unreadCount > 99 ? "99+" : unreadCount}
+                      </span>
+                    )}
+                  </button>
+                  {bellOpen && (
+                    <div className="absolute right-0 mt-1 w-80 bg-bg-surface border border-bg-border rounded-xl shadow-xl z-50">
+                      <div className="flex items-center justify-between px-3 py-2 border-b border-bg-border">
+                        <span className="text-xs font-semibold text-text-muted uppercase">Recent Alerts</span>
+                        <button onClick={() => setBellOpen(false)} className="text-text-faint hover:text-text-primary">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {criticalEvents.length === 0 ? (
+                        <p className="text-xs text-text-faint text-center py-6">No high/critical events yet</p>
+                      ) : (
+                        <div className="divide-y divide-bg-border max-h-72 overflow-y-auto">
+                          {criticalEvents.slice(0, 5).map((ev) => (
+                            <button
+                              key={ev.event_id}
+                              onClick={() => { setBellOpen(false); router.push(`/sessions/${ev.session_id}`); }}
+                              className="w-full text-left px-3 py-2.5 hover:bg-bg-elevated transition-colors"
+                            >
+                              <div className="flex items-center justify-between gap-2 mb-0.5">
+                                <span className={`text-xs font-semibold ${ev.severity === "critical" ? "text-severity-critical" : "text-severity-high"}`}>
+                                  {ev.severity.toUpperCase()}
+                                </span>
+                                <span className="text-xs text-text-faint font-mono">{ev.source_ip}</span>
+                              </div>
+                              <p className="text-xs text-text-muted truncate">{ev.event_type.replace(/_/g, " ")}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+          <div className="flex-1">
+            {children}
+          </div>
         </main>
       </div>
       {/* Change Password Modal */}
