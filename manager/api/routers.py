@@ -18,7 +18,10 @@ from manager.api.admin.smtp         import router as smtp_router
 from manager.api.admin.siem         import router as siem_router
 from manager.api.admin.audit        import router as audit_router
 from manager.api.admin.alert_rules  import router as alert_rules_router
+from manager.api.admin.llm_config   import router as llm_config_router
 from manager.api.reports            import router as reports_router
+from manager.api.search             import router as search_router
+from manager.api.llm                import router as llm_router
 
 api_router = APIRouter()
 
@@ -36,4 +39,7 @@ api_router.include_router(smtp_router,         prefix="/admin")
 api_router.include_router(siem_router,         prefix="/admin")
 api_router.include_router(audit_router,        prefix="/admin")
 api_router.include_router(alert_rules_router,  prefix="/admin")
+api_router.include_router(llm_config_router,   prefix="/admin")
 api_router.include_router(reports_router)
+api_router.include_router(search_router)
+api_router.include_router(llm_router)

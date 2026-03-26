@@ -690,6 +690,12 @@ class AppConfig(Base):
     audit_retention_days  = Column(Integer, default=0)   # 0 = disabled
     updated_at            = Column(Text, default=lambda: datetime.now(timezone.utc).isoformat())
 
+    # LLM configuration (overrides env vars when set)
+    llm_enabled           = Column(Boolean,  nullable=True)   # None = use env default
+    llm_backend           = Column(Text,     nullable=True)   # "ollama" | "lmstudio"
+    llm_base_url          = Column(Text,     nullable=True)   # e.g. http://localhost:11434
+    llm_default_model     = Column(Text,     nullable=True)   # e.g. llama3.2
+
     @classmethod
     async def get(cls, db: AsyncSession) -> "AppConfig":
         result = await db.execute(select(cls).where(cls.id == 1))
@@ -749,9 +755,12 @@ class AlertRule(Base):
     # Operators: eq | neq | gte | lte | in | not_in | contains
     conditions  = Column(JSONB, nullable=False, default=list)
     # Actions
-    notify_smtp = Column(Boolean, default=False, nullable=False)
-    notify_siem = Column(Boolean, default=False, nullable=False)
-    auto_triage = Column(Text, nullable=True)   # triage_status to auto-set, or None
+    notify_smtp    = Column(Boolean, default=False, nullable=False)
+    notify_siem    = Column(Boolean, default=False, nullable=False)
+    auto_triage    = Column(Text, nullable=True)   # triage_status to auto-set, or None
+    # Correlation window: fire only after `threshold` matching events within `window_seconds`
+    window_seconds = Column(Integer, nullable=True)
+    threshold      = Column(Integer, nullable=True)
     created_at  = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at  = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
 

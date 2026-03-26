@@ -64,7 +64,39 @@ def match_rule(rule: models.AlertRule, ev: dict) -> bool:
     return all(_eval_condition(c, ev) for c in conditions)
 
 
-async def evaluate_rules(db, ev: dict, db_session: models.Session) -> None:
+async def _check_correlation(rule: models.AlertRule, ev: dict, redis) -> bool:
+    """
+    For rules with window_seconds + threshold, use Redis to count matching events
+    within the rolling window. Returns True only when the count first reaches the
+    threshold (fires once per window cycle, then resets the counter).
+
+    Key pattern: corr:{rule_id}:{source_ip}
+    TTL is set on the first hit and not refreshed, so the window slides naturally.
+    """
+    if not (rule.window_seconds and rule.threshold and redis):
+        return True  # No correlation configured — always fire
+
+    source_ip = ev.get("source_ip", "unknown")
+    key = f"corr:{rule.id}:{source_ip}"
+    try:
+        count = await redis.incr(key)
+        if count == 1:
+            # First event in a new window — start the TTL
+            await redis.expire(key, rule.window_seconds)
+        if count < rule.threshold:
+            return False  # Not enough events yet
+        if count == rule.threshold:
+            # Exactly at threshold — fire and reset so window can start fresh
+            await redis.delete(key)
+            return True
+        # count > threshold means we already fired and reset; this is a race — skip
+        return False
+    except Exception as e:
+        logger.warning("Correlation Redis error: %s (rule=%s)", e, rule.name)
+        return True  # Fail-open: fire anyway if Redis is unavailable
+
+
+async def evaluate_rules(db, ev: dict, db_session: models.Session, redis=None) -> None:
     """Evaluate all enabled alert rules against an incoming event."""
     try:
         rules = await models.AlertRule.get_enabled(db)
@@ -80,6 +112,11 @@ async def evaluate_rules(db, ev: dict, db_session: models.Session) -> None:
 
     for rule in rules:
         if not match_rule(rule, ev):
+            continue
+
+        # Time-window correlation: only proceed if threshold is reached
+        should_fire = await _check_correlation(rule, ev, redis)
+        if not should_fire:
             continue
 
         logger.info(

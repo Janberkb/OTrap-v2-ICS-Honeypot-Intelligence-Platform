@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, createContext, useContext } from "react";
+import { useEffect, useState, useRef, createContext, useContext } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { apiPath, streamUrl } from "@/lib/api";
@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/brand-mark";
 import {
   LayoutDashboard, Shield, Activity, Radio,
   Settings, LogOut, Users, Database, FileText,
-  WifiOff, KeyRound, X, Bell, HardDriveDownload, Bug, Target, Zap, FileDown
+  WifiOff, KeyRound, X, Bell, HardDriveDownload, Bug, Target, Zap, FileDown, Search, Brain, Cpu
 } from "lucide-react";
 
 // ─── Live Stream Context ────────────────────────────────────────────────────
@@ -103,6 +103,14 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
   const [chgPwError,  setChgPwError]  = useState("");
   const [chgPwOk,     setChgPwOk]     = useState(false);
   const [chgPwLoading,setChgPwLoading]= useState(false);
+  const [aiEnabled,   setAiEnabled]   = useState<boolean | null>(null);
+
+  // Global search
+  const [searchQ,       setSearchQ]       = useState("");
+  const [searchResults, setSearchResults] = useState<{ sessions: any[]; iocs: any[] } | null>(null);
+  const [searchOpen,    setSearchOpen]    = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   function isPathActive({ href, exact, aliases = [] }: NavItem): boolean {
     const candidates = [href, ...aliases];
@@ -110,6 +118,26 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
       pathname === candidate || (!exact && pathname.startsWith(`${candidate}/`))
     ));
   }
+
+  // ── LLM availability (5-min localStorage cache) ────────────────────────
+  useEffect(() => {
+    const CACHE_KEY = "llm_enabled_cache";
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      try {
+        const { enabled, ts } = JSON.parse(cached);
+        if (Date.now() - ts < 5 * 60 * 1000) { setAiEnabled(enabled); return; }
+      } catch {}
+    }
+    fetch(apiPath("/llm/models"), { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d) return;
+        setAiEnabled(d.enabled ?? false);
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ enabled: d.enabled ?? false, ts: Date.now() }));
+      })
+      .catch(() => {});
+  }, []);
 
   // ── Load current user ──────────────────────────────────────────────────
   useEffect(() => {
@@ -150,6 +178,28 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
       es.addEventListener("attack_event", (e) => {
         const ev: LiveEvent = JSON.parse(e.data);
         setEvents((prev) => mergeEvents(prev, [ev]));
+
+        // Critical event: browser notification + tab title flash
+        if (ev.severity === "critical" || ev.cpu_stop) {
+          const msg = ev.cpu_stop
+            ? `CPU STOP detected from ${ev.source_ip}`
+            : `Critical alert: ${ev.summary || ev.event_type} from ${ev.source_ip}`;
+
+          // Browser Notification API (only if permission granted)
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification("OTrap — Critical Alert", { body: msg, icon: "/favicon.ico" });
+          } else if (typeof Notification !== "undefined" && Notification.permission === "default") {
+            Notification.requestPermission();
+          }
+
+          // Tab title flash (3 cycles)
+          const orig = document.title;
+          let flashes = 0;
+          const iv = setInterval(() => {
+            document.title = flashes % 2 === 0 ? "🚨 CRITICAL — OTrap" : orig;
+            if (++flashes >= 6) { clearInterval(iv); document.title = orig; }
+          }, 700);
+        }
       });
 
       es.addEventListener("stats_update", (e) => {
@@ -168,6 +218,32 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
 
     connect();
     return () => { es?.close(); clearTimeout(retryTimer); };
+  }, []);
+
+  // Search debounce
+  useEffect(() => {
+    const trimmed = searchQ.trim();
+    if (!trimmed) { setSearchResults(null); setSearchOpen(false); return; }
+    setSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const r = await fetch(apiPath(`/search?q=${encodeURIComponent(trimmed)}`), { credentials: "include" });
+        if (r.ok) { setSearchResults(await r.json()); setSearchOpen(true); }
+      } catch {}
+      setSearchLoading(false);
+    }, 300);
+    return () => { clearTimeout(timer); setSearchLoading(false); };
+  }, [searchQ]);
+
+  // Search click-outside
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
   }, []);
 
   async function handleChangePassword() {
@@ -228,6 +304,7 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
     { href: "/admin/users",         label: "Users",        icon: Users },
     { href: "/admin/integrations",  label: "Integrations", icon: Database, aliases: ["/admin/notifications", "/admin/siem"] },
     { href: "/admin/alert-rules",   label: "Alert Rules",  icon: Zap },
+    { href: "/admin/llm",           label: "Local LLM",    icon: Cpu },
     { href: "/admin/audit",         label: "Audit Log",    icon: FileText },
     { href: "/admin/backup",        label: "Backup",       icon: HardDriveDownload },
   ] : [];
@@ -312,7 +389,95 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
             const criticalEvents = events.filter((e) => e.severity === "critical" || e.severity === "high");
             const unreadCount = Math.max(0, criticalEvents.length - seenCount);
             return (
-              <div className="flex-shrink-0 flex items-center justify-end px-4 py-1.5 border-b border-bg-border bg-bg-surface sticky top-0 z-10">
+              <div className="flex-shrink-0 flex items-center justify-between px-4 py-1.5 border-b border-bg-border bg-bg-surface sticky top-0 z-10">
+                {/* Global search */}
+                <div ref={searchRef} className="relative">
+                  <div className="flex items-center gap-2 bg-bg-elevated border border-bg-border rounded-lg px-2.5 py-1 w-64">
+                    <Search className="w-3.5 h-3.5 text-text-faint flex-shrink-0" />
+                    <input
+                      type="text"
+                      value={searchQ}
+                      onChange={(e) => setSearchQ(e.target.value)}
+                      onFocus={() => { if (searchResults) setSearchOpen(true); }}
+                      placeholder="Search IPs, IOCs, sessions…"
+                      className="bg-transparent text-xs text-text-primary placeholder:text-text-faint outline-none w-full"
+                    />
+                    {(searchQ || searchLoading) && (
+                      <button
+                        onClick={() => { setSearchQ(""); setSearchResults(null); setSearchOpen(false); }}
+                        className="text-text-faint hover:text-text-primary flex-shrink-0"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                  {searchOpen && searchResults && (
+                    <div className="absolute left-0 mt-1 w-80 bg-bg-surface border border-bg-border rounded-xl shadow-xl z-50 overflow-hidden">
+                      {searchResults.sessions.length === 0 && searchResults.iocs.length === 0 ? (
+                        <p className="text-xs text-text-faint text-center py-6">No results for &ldquo;{searchQ}&rdquo;</p>
+                      ) : (
+                        <>
+                          {searchResults.sessions.length > 0 && (
+                            <>
+                              <div className="px-3 py-1.5 border-b border-bg-border bg-bg-elevated">
+                                <span className="text-[10px] font-semibold text-text-faint uppercase tracking-wider">Sessions</span>
+                              </div>
+                              {searchResults.sessions.map((s) => (
+                                <button key={s.id}
+                                  onClick={() => { router.push(`/sessions/${s.id}`); setSearchOpen(false); setSearchQ(""); }}
+                                  className="w-full text-left px-3 py-2 hover:bg-bg-elevated transition-colors flex items-center justify-between gap-2"
+                                >
+                                  <span className="text-xs font-mono text-text-primary">{s.source_ip}</span>
+                                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                                    <span className="text-[10px] text-text-faint">{s.protocol}</span>
+                                    <span className={`text-[10px] font-medium ${
+                                      s.severity === "critical" ? "text-severity-critical" :
+                                      s.severity === "high"     ? "text-severity-high" :
+                                      s.severity === "medium"   ? "text-severity-medium" :
+                                      "text-text-faint"
+                                    }`}>{s.severity}</span>
+                                  </div>
+                                </button>
+                              ))}
+                            </>
+                          )}
+                          {searchResults.iocs.length > 0 && (
+                            <>
+                              <div className={`px-3 py-1.5 border-b border-bg-border bg-bg-elevated ${searchResults.sessions.length > 0 ? "border-t" : ""}`}>
+                                <span className="text-[10px] font-semibold text-text-faint uppercase tracking-wider">IOCs</span>
+                              </div>
+                              {searchResults.iocs.map((ioc, i) => (
+                                <button key={i}
+                                  onClick={() => { router.push(`/iocs?search=${encodeURIComponent(ioc.value)}`); setSearchOpen(false); setSearchQ(""); }}
+                                  className="w-full text-left px-3 py-2 hover:bg-bg-elevated transition-colors flex items-center justify-between gap-2"
+                                >
+                                  <span className="text-xs font-mono text-text-primary truncate">{ioc.value}</span>
+                                  <span className="text-[10px] text-text-faint flex-shrink-0">{ioc.ioc_type}</span>
+                                </button>
+                              ))}
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  {/* AI availability badge */}
+                  {aiEnabled !== null && (
+                    <span
+                      title={aiEnabled ? "Local LLM connected" : "LLM disabled — set LLM_ENABLED=true in .env"}
+                      className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                        aiEnabled
+                          ? "text-severity-low border-severity-low/30 bg-severity-low/10"
+                          : "text-text-faint border-bg-border bg-bg-elevated"
+                      }`}
+                    >
+                      <Brain className="w-2.5 h-2.5" />AI
+                    </span>
+                  )}
+
                 <div className="relative">
                   <button
                     onClick={() => { setBellOpen((o) => !o); setSeenCount(criticalEvents.length); }}
@@ -358,6 +523,7 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
                     </div>
                   )}
                 </div>
+                </div>{/* end flex items-center gap-1.5 */}
               </div>
             );
           })()}

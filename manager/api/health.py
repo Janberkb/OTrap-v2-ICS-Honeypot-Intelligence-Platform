@@ -67,20 +67,29 @@ async def get_health(request: Request, db=Depends(get_db)) -> dict:
         "total":   len(sensor_statuses),
     }
 
-    # ── LLM Engine (optional) ─────────────────────────────────────────────────
-    import os, httpx
-    if os.environ.get("LLM_ENABLED") == "true":
+    # ── Local LLM (Ollama / LM Studio) ───────────────────────────────────────
+    import httpx
+    from manager.config import settings as app_settings
+    if app_settings.llm_enabled:
+        # Determine health URL per backend
+        if app_settings.llm_backend == "lmstudio":
+            health_url = f"{app_settings.lm_studio_base_url}/v1/models"
+        else:
+            health_url = f"{app_settings.ollama_base_url}/api/tags"
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                r = await client.get(
-                    f"{os.environ.get('LLM_ENGINE_URL', 'http://llm_engine:8001')}/health"
-                )
+                r = await client.get(health_url)
             services["llm_engine"] = {
-                "status": "healthy" if r.status_code == 200 else "unhealthy",
-                "detail": f"HTTP {r.status_code}",
+                "status":  "healthy" if r.status_code == 200 else "unhealthy",
+                "detail":  f"{app_settings.llm_backend} HTTP {r.status_code}",
+                "backend": app_settings.llm_backend,
             }
         except Exception as e:
-            services["llm_engine"] = {"status": "unhealthy", "detail": str(e)}
+            services["llm_engine"] = {
+                "status":  "unhealthy",
+                "detail":  str(e),
+                "backend": app_settings.llm_backend,
+            }
     else:
         services["llm_engine"] = {"status": "disabled"}
 

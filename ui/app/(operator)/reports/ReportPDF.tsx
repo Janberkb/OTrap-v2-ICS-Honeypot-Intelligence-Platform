@@ -99,7 +99,61 @@ const s = StyleSheet.create({
   footer: { position: "absolute", bottom: 18, left: 28, right: 28, borderTopWidth: 0.5, borderTopColor: C.border, paddingTop: 7, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   footerLeft:  { fontSize: 7, color: C.textFaint },
   footerRight: { fontSize: 7, fontFamily: "Helvetica-Bold", color: "#fbbf24" },
+
+  // ── Executive Summary block
+  execRow: { flexDirection: "row", gap: 10, marginTop: 10, marginBottom: 14 },
+  riskBox: { width: 90, backgroundColor: C.elevated, borderRadius: 6, borderWidth: 0.5, borderColor: C.border, padding: 10, alignItems: "center", justifyContent: "center" },
+  riskScore: { fontSize: 36, fontFamily: "Helvetica-Bold", lineHeight: 1 },
+  riskLabel: { fontSize: 6.5, textTransform: "uppercase", letterSpacing: 0.8, color: C.textFaint, marginTop: 4 },
+  riskTag:   { fontSize: 7, fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.5, marginTop: 6, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3 },
+  findingBox: { flex: 1, backgroundColor: C.surface, borderRadius: 6, borderWidth: 0.5, borderColor: C.border, padding: 10 },
+  findingTitle: { fontSize: 7, fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.8, color: C.textFaint, marginBottom: 7 },
+  findingRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6, paddingBottom: 6, borderBottomWidth: 0.5, borderBottomColor: C.borderFaint },
+  recBox: { flex: 1, backgroundColor: C.surface, borderRadius: 6, borderWidth: 0.5, borderColor: C.border, padding: 10 },
+  recTitle: { fontSize: 7, fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.8, color: C.textFaint, marginBottom: 7 },
+  recRow: { flexDirection: "row", gap: 6, marginBottom: 6 },
+  recBullet: { width: 12, height: 12, borderRadius: 6, backgroundColor: C.accentDim, alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 0.5 },
+  recBulletText: { fontSize: 7, fontFamily: "Helvetica-Bold", color: C.accent },
+  recText: { fontSize: 7.5, color: C.textMuted, lineHeight: 1.5, flex: 1 },
 });
+
+// ─── Executive summary helpers ────────────────────────────────────────────────
+
+function calcRiskScore(sessions: any[], cpuStops: number): number {
+  let score = 0;
+  const critCount = sessions.filter((s: any) => s.severity === "critical").length;
+  const highCount = sessions.filter((s: any) => s.severity === "high").length;
+  if (critCount > 0) score += 3;
+  if (highCount > 0) score += 2;
+  if (cpuStops > 0) score += Math.min(cpuStops * 2, 3);
+  if (sessions.length > 20) score += 1;
+  const totalIocs = sessions.reduce((sum: number, s: any) => sum + (s.ioc_count ?? 0), 0);
+  if (totalIocs > 5) score += 1;
+  return Math.min(score, 10);
+}
+
+function riskLabel(score: number): { label: string; color: string; bg: string; border: string } {
+  if (score >= 8) return { label: "Critical Risk",  color: "#f87171", bg: "#450a0a", border: "#7f1d1d" };
+  if (score >= 6) return { label: "High Risk",      color: "#fb923c", bg: "#431407", border: "#7c2d12" };
+  if (score >= 4) return { label: "Medium Risk",    color: "#fbbf24", bg: "#422006", border: "#78350f" };
+  if (score >= 2) return { label: "Low Risk",       color: "#4ade80", bg: "#052e16", border: "#14532d" };
+  return               { label: "Minimal Risk",  color: "#94a3b8", bg: C.elevated,  border: C.border  };
+}
+
+function getRecommendations(protocols: string[], cpuStops: number): string[] {
+  const recs: string[] = [];
+  const protos = protocols.map((p: string) => p.toLowerCase());
+  if (protos.some(p => ["s7comm", "s7"].includes(p)))
+    recs.push("Isolate S7/SIMATIC PLCs on a dedicated OT VLAN and enforce PG/PC whitelist rules via an industrial firewall.");
+  if (protos.includes("modbus"))
+    recs.push("Enable Modbus function-code whitelisting; restrict to read-only operations (FC01–04) from authorized master IPs only.");
+  if (protos.some(p => ["http", "https"].includes(p)))
+    recs.push("Enforce authentication on web-based HMI panels and disable any direct internet-facing access to these endpoints.");
+  if (cpuStops > 0)
+    recs.push("Investigate PLC program integrity after CPU STOP events; verify ladder logic has not been tampered with.");
+  recs.push("Conduct structured threat hunting aligned to MITRE ATT&CK for ICS (IEC 62443 / NERC CIP compliance).");
+  return recs.slice(0, 3);
+}
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
 
@@ -304,6 +358,66 @@ function ReportPDF({ data, title, rangeLabel, genDate }: ReportPDFProps) {
           { label: "Actionable Sessions", value: sessions.filter((s: any) => s.is_actionable).length, accent: "#fbbf24" },
           { label: "Unique Countries",    value: stats?.top_countries?.length ?? 0,                   accent: "#22d3ee" },
         ]} />
+
+        {/* ── RISK SCORE + TOP FINDINGS + RECOMMENDATIONS ── */}
+        {(() => {
+          const riskScore   = calcRiskScore(sessions, cpuStops);
+          const risk        = riskLabel(riskScore);
+          const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, noise: 4 };
+          const topFindings = [...sessions]
+            .sort((a: any, b: any) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5))
+            .slice(0, 3);
+          const protocolNames = protocols.map((p: any) => p.protocol as string);
+          const recs = getRecommendations(protocolNames, cpuStops);
+
+          return (
+            <View style={s.execRow}>
+              {/* Risk Score */}
+              <View style={[s.riskBox, { borderColor: risk.border, backgroundColor: risk.bg }]}>
+                <Text style={[s.riskScore, { color: risk.color }]}>{riskScore}</Text>
+                <Text style={{ fontSize: 6.5, color: risk.color, opacity: 0.7, marginTop: 2 }}>/10</Text>
+                <View style={[s.riskTag, { backgroundColor: risk.bg, borderWidth: 0.5, borderColor: risk.border }]}>
+                  <Text style={{ fontSize: 6.5, color: risk.color, fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.5 }}>{risk.label}</Text>
+                </View>
+              </View>
+
+              {/* Top Findings */}
+              <View style={s.findingBox}>
+                <Text style={s.findingTitle}>Top Findings</Text>
+                {topFindings.length === 0
+                  ? <Text style={{ fontSize: 8, color: C.textFaint }}>No sessions recorded in this period.</Text>
+                  : topFindings.map((f: any, i: number) => {
+                      const sev = (f.severity ?? "noise").toLowerCase();
+                      return (
+                        <View key={i} style={[s.findingRow, i === topFindings.length - 1 ? { borderBottomWidth: 0, marginBottom: 0, paddingBottom: 0 } : {}]}>
+                          <View style={{ backgroundColor: SEV_BG[sev] ?? C.elevated, borderRadius: 3, borderWidth: 0.5, borderColor: SEV_BORDER[sev] ?? C.border, paddingHorizontal: 4, paddingVertical: 2, flexShrink: 0 }}>
+                            <Text style={{ fontSize: 6.5, fontFamily: "Helvetica-Bold", textTransform: "uppercase", color: SEV_COLOR[sev] ?? C.textMuted }}>{sev}</Text>
+                          </View>
+                          <Text style={{ fontSize: 8, fontFamily: "Courier", color: C.textPrimary, flexShrink: 0 }}>{f.source_ip}</Text>
+                          <Text style={{ fontSize: 7.5, color: C.textMuted, flex: 1 }}>
+                            {f.primary_protocol?.toUpperCase() ?? "UNKNOWN"}  ·  {f.event_count ?? 0} events{f.cpu_stop_occurred ? "  ·  CPU STOP" : ""}
+                          </Text>
+                        </View>
+                      );
+                    })
+                }
+              </View>
+
+              {/* Recommendations */}
+              <View style={s.recBox}>
+                <Text style={s.recTitle}>Recommendations</Text>
+                {recs.map((rec, i) => (
+                  <View key={i} style={s.recRow}>
+                    <View style={s.recBullet}>
+                      <Text style={s.recBulletText}>{i + 1}</Text>
+                    </View>
+                    <Text style={s.recText}>{rec}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          );
+        })()}
 
         {/* SEVERITY + PROTOCOL side by side */}
         <View style={{ marginTop: 14, marginBottom: 14, flexDirection: "row", gap: 12 }}>

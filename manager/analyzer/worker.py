@@ -69,6 +69,7 @@ CPU_STOP_EVENT_TYPES = {"S7_CPU_STOP"}
 HIGH_VALUE_EVENT_TYPES = {
     "S7_CPU_STOP", "S7_DOWNLOAD_BLOCK", "S7_DELETE_BLOCK",
     "HMI_LOGIN_SUCCESS", "S7_WRITE_VAR",
+    "ENIP_CIP_WRITE_TAG", "ENIP_CIP_SET_ATTR",
 }
 
 
@@ -175,8 +176,17 @@ class AnalyzerWorker:
         # Normalize: use IP + protocol only (not ephemeral port)
         parts = hint.split(":")
         ip = parts[0] if parts else ev.get("source_ip", "unknown")
+        port = parts[1] if len(parts) >= 2 else ""
         protocol = parts[2] if len(parts) >= 3 else ev.get("protocol", "unknown")
-        group_key = f"{ip}:{protocol}"
+
+        # HTTP/HTTPS: group by IP + port + protocol so that concurrent browser
+        # sessions from the same IP (e.g. corporate proxy) are kept separate.
+        # S7/Modbus: group by IP + protocol only — the same PLC tool reconnects
+        # on a new ephemeral port for every request; merging is correct behaviour.
+        if protocol in ("http", "https"):
+            group_key = f"{ip}:{port}:{protocol}"
+        else:
+            group_key = f"{ip}:{protocol}"
 
         # Check in-memory cache first
         if group_key in self._session_cache:
@@ -297,16 +307,29 @@ class AnalyzerWorker:
         if db_session.signal_tier in ("suspicious", "impact"):
             db_session.is_actionable = True
 
-        # Merge MITRE techniques
+        # Merge MITRE techniques (primary + additional_techniques)
         if mitre:
-            techniques = db_session.mitre_techniques or []
-            tech = {
-                "technique_id":   mitre.get("technique_id"),
-                "technique_name": mitre.get("technique_name"),
-                "tactic":         mitre.get("tactic"),
-            }
-            if tech not in techniques:
-                techniques.append(tech)
+            techniques = list(db_session.mitre_techniques or [])
+            all_techs = [
+                {
+                    "technique_id":   mitre.get("technique_id"),
+                    "technique_name": mitre.get("technique_name"),
+                    "tactic":         mitre.get("tactic"),
+                    "description":    mitre.get("description", ""),
+                }
+            ] + [
+                {
+                    "technique_id":   t.get("technique_id"),
+                    "technique_name": t.get("technique_name"),
+                    "tactic":         t.get("tactic"),
+                    "description":    t.get("description", ""),
+                }
+                for t in mitre.get("additional_techniques", [])
+            ]
+            for tech in all_techs:
+                # Deduplicate by technique_id
+                if not any(existing.get("technique_id") == tech["technique_id"] for existing in techniques):
+                    techniques.append(tech)
             db_session.mitre_techniques = techniques
 
         db_session.event_count = (db_session.event_count or 0) + 1
@@ -353,7 +376,7 @@ class AnalyzerWorker:
             async with self._db_factory() as session:
                 await maybe_send_smtp(session, ev, db_session)
                 await maybe_forward_siem(session, ev, db_session)
-                await evaluate_rules(session, ev, db_session)
+                await evaluate_rules(session, ev, db_session, redis=self._redis_broadcast)
         except Exception as e:
             logger.warning("Notification error", extra={"error": str(e)})
 
@@ -369,6 +392,7 @@ def _normalize_protocol(proto: str) -> str:
         "PROTOCOL_HTTP":    "http",
         "PROTOCOL_HTTPS":   "https",
         "PROTOCOL_RAW_TCP": "tcp",
+        "PROTOCOL_ENIP":    "enip",
     }
     return mapping.get(proto, proto.lower().replace("protocol_", ""))
 
@@ -388,18 +412,42 @@ def _event_family(event_type: str) -> str:
         if "LOGIN" in event_type:
             return "credential_attack"
         return "web_access"
+    if event_type.startswith("ENIP_"):
+        if event_type in ("ENIP_CIP_WRITE_TAG", "ENIP_CIP_SET_ATTR"):
+            return "ics_exploit"
+        if event_type in ("ENIP_LIST_IDENTITY", "ENIP_LIST_SERVICES", "ENIP_CIP_GET_ATTR"):
+            return "ics_recon"
+        return "ics_enip"
     return "unknown"
 
 
 def _infer_attack_phase(event_type: str) -> str:
     """Map event type to cyber kill chain phase."""
-    if event_type in ("S7_COTP_CONNECT", "MODBUS_CONNECT", "HMI_ACCESS"):
+    if event_type in (
+        "S7_COTP_CONNECT", "MODBUS_CONNECT", "HMI_ACCESS", "HMI_LOGIN_ATTEMPT",
+        "ENIP_REGISTER_SESSION",
+    ):
         return "initial_access"
-    if event_type in ("S7_SZL_READ", "S7_READ_VAR", "HMI_SENSITIVE_PATH", "MODBUS_SCANNER_DETECTED"):
+    if event_type in (
+        "S7_SZL_READ", "S7_READ_VAR", "S7_UNKNOWN_FUNCTION", "S7_NON_TPKT_TRAFFIC",
+        "S7_INVALID_COTP_TYPE", "S7_PARTIAL_PACKET",
+        "HMI_SENSITIVE_PATH", "HMI_SCANNER_DETECTED",
+        "MODBUS_SCANNER_DETECTED", "MODBUS_READ_COILS", "MODBUS_READ_DISCRETE",
+        "MODBUS_READ_HOLDING", "MODBUS_READ_INPUT",
+        "ENIP_LIST_IDENTITY", "ENIP_LIST_SERVICES", "ENIP_CIP_GET_ATTR", "ENIP_CIP_READ_TAG",
+    ):
         return "discovery"
-    if event_type in ("S7_WRITE_VAR", "MODBUS_WRITE_MULTIPLE", "HMI_LOGIN_ATTEMPT"):
+    if event_type in (
+        "S7_WRITE_VAR", "S7_UPLOAD_BLOCK", "S7_CPU_START",
+        "MODBUS_WRITE_MULTIPLE", "MODBUS_WRITE_SINGLE_REG", "MODBUS_WRITE_SINGLE_COIL",
+        "ENIP_SEND_RRDATA",
+    ):
         return "lateral_movement"
-    if event_type in ("S7_CPU_STOP", "S7_DOWNLOAD_BLOCK", "HMI_LOGIN_SUCCESS"):
+    if event_type in (
+        "S7_CPU_STOP", "S7_DOWNLOAD_BLOCK", "S7_DELETE_BLOCK",
+        "HMI_LOGIN_SUCCESS", "HMI_SQLI_PROBE", "HMI_CMD_INJECTION",
+        "ENIP_CIP_WRITE_TAG", "ENIP_CIP_SET_ATTR",
+    ):
         return "impact"
     return "initial_access"
 
@@ -420,5 +468,31 @@ def _classification(event_type: str, metadata: dict) -> str:
         "S7_MALFORMED_TPKT": "malformed_protocol",
         "S7_NON_TPKT_TRAFFIC":       "port_scanner",
         "MODBUS_SCANNER_DETECTED":   "modbus_scanner",
+        # EtherNet/IP
+        "ENIP_LIST_IDENTITY":    "device_discovery",
+        "ENIP_LIST_SERVICES":    "service_enumeration",
+        "ENIP_REGISTER_SESSION": "enip_session_open",
+        "ENIP_CIP_READ_TAG":     "tag_read",
+        "ENIP_CIP_WRITE_TAG":    "tag_write",
+        "ENIP_CIP_GET_ATTR":     "attribute_enumeration",
+        "ENIP_CIP_SET_ATTR":     "attribute_modification",
+        "ENIP_UNKNOWN_COMMAND":  "malformed_protocol",
+        "ENIP_SESSION_TIMEOUT":  "session_timeout",
+        # Additional S7 events
+        "S7_CPU_START":          "cpu_start_command",
+        "S7_UNKNOWN_FUNCTION":   "unknown_function_code",
+        "S7_SESSION_TIMEOUT":    "session_timeout",
+        "S7_PARTIAL_PACKET":     "partial_packet",
+        "S7_INVALID_COTP_TYPE":  "malformed_protocol",
+        # Additional Modbus events
+        "MODBUS_READ_DISCRETE":     "coil_read",
+        "MODBUS_READ_INPUT":        "register_read",
+        "MODBUS_WRITE_SINGLE_COIL": "coil_write",
+        "MODBUS_UNKNOWN_FUNCTION":  "unknown_function_code",
+        "MODBUS_EXCEPTION_RESPONSE": "protocol_exception",
+        "MODBUS_SESSION_TIMEOUT":   "session_timeout",
+        # Additional HMI events
+        "HMI_ACCESS":           "hmi_access",
+        "HMI_SCANNER_DETECTED": "scanner_probe",
     }
     return labels.get(event_type, "generic_probe")

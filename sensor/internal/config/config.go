@@ -15,6 +15,7 @@ type SensorConfig struct {
 	ModbusPort   int
 	HMIHTTPPort  int
 	HMIHTTPSPort int
+	ENIPPort     int
 
 	// HMI TLS (PEM strings; empty = auto-generate self-signed)
 	HMITLSCertPEM string
@@ -54,6 +55,7 @@ func FromIdentity(id *join.Identity) *SensorConfig {
 		ModbusPort:   intOr(int(c.GetModbusPort()), 502),
 		HMIHTTPPort:  intOr(int(c.GetHmiHttpPort()), 80),
 		HMIHTTPSPort: intOr(int(c.GetHmiHttpsPort()), 443),
+		ENIPPort:     44818,
 
 		HMITLSCertPEM: c.GetHmiTlsCertPem(),
 		HMITLSKeyPEM:  c.GetHmiTlsKeyPem(),

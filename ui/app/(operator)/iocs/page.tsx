@@ -6,14 +6,21 @@ import { Search, Download, RefreshCw, ChevronDown } from "lucide-react";
 import { formatDateTime } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
-const IOC_TYPES = ["", "ip", "domain", "url", "hash_md5", "hash_sha256"];
+const IOC_TYPES = ["", "ip", "domain", "url", "user_agent", "username", "password", "sql_payload", "path_probe", "url_path", "s7_payload", "hash_md5", "hash_sha256"];
 
 const TYPE_BADGE: Record<string, string> = {
-  ip:          "badge-critical",
-  domain:      "badge-high",
-  url:         "badge-medium",
-  hash_md5:    "badge-low",
-  hash_sha256: "badge-low",
+  ip:           "badge-critical",
+  domain:       "badge-high",
+  url:          "badge-medium",
+  user_agent:   "badge-medium",
+  username:     "badge-high",
+  password:     "badge-high",
+  sql_payload:  "badge-critical",
+  path_probe:   "badge-medium",
+  url_path:     "badge-low",
+  s7_payload:   "badge-critical",
+  hash_md5:     "badge-low",
+  hash_sha256:  "badge-low",
 };
 
 function ConfidenceBar({ value }: { value: number }) {

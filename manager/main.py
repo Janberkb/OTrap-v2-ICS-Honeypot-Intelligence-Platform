@@ -37,6 +37,9 @@ def create_app() -> FastAPI:
         await run_migrations(engine)
         app.state.db_factory = session_factory
 
+        # ── Apply DB-stored LLM config on top of env defaults ─────────────────
+        await _apply_db_llm_config(session_factory, settings)
+
         # ── Redis ─────────────────────────────────────────────────────────────
         redis = aioredis.from_url(settings.redis_url_with_auth, decode_responses=True)
         app.state.redis = redis
@@ -179,6 +182,24 @@ async def _run_audit_retention(session_factory) -> None:
                     logger.info("Audit retention: purged %d entries older than %d days", deleted, days)
         except Exception as e:
             logger.error("Audit retention job failed: %s", e)
+
+
+async def _apply_db_llm_config(session_factory, settings: Settings) -> None:
+    """Override LLM settings with values stored in AppConfig (if set)."""
+    from manager.db import models
+    from manager.config import settings as module_settings
+
+    try:
+        async with session_factory() as db:
+            cfg = await models.AppConfig.get(db)
+            await db.commit()
+            for attr in ("llm_enabled", "llm_backend", "llm_base_url", "llm_default_model"):
+                val = getattr(cfg, attr, None)
+                if val is not None:
+                    setattr(settings, attr, val)
+                    setattr(module_settings, attr, val)
+    except Exception as e:
+        logger.warning("Could not load LLM config from DB: %s", e)
 
 
 async def _ensure_initial_admin(session_factory, settings: Settings) -> None:

@@ -33,13 +33,15 @@ class ConditionItem(BaseModel):
 
 
 class AlertRuleRequest(BaseModel):
-    name:        str
-    description: str | None = None
-    enabled:     bool = True
-    conditions:  list[ConditionItem] = []
-    notify_smtp: bool = False
-    notify_siem: bool = False
-    auto_triage: str | None = None
+    name:           str
+    description:    str | None = None
+    enabled:        bool = True
+    conditions:     list[ConditionItem] = []
+    notify_smtp:    bool = False
+    notify_siem:    bool = False
+    auto_triage:    str | None = None
+    window_seconds: int | None = None   # correlation window length in seconds
+    threshold:      int | None = None   # minimum matching events to fire
 
 
 def _validate(payload: AlertRuleRequest) -> None:
@@ -47,6 +49,12 @@ def _validate(payload: AlertRuleRequest) -> None:
         raise HTTPException(status_code=400, detail="Rule name is required")
     if payload.auto_triage not in VALID_TRIAGES:
         raise HTTPException(status_code=400, detail=f"Invalid auto_triage value: {payload.auto_triage}")
+    if (payload.window_seconds is not None) != (payload.threshold is not None):
+        raise HTTPException(status_code=400, detail="window_seconds and threshold must both be set or both be null")
+    if payload.window_seconds is not None and payload.window_seconds < 10:
+        raise HTTPException(status_code=400, detail="window_seconds must be at least 10")
+    if payload.threshold is not None and payload.threshold < 2:
+        raise HTTPException(status_code=400, detail="threshold must be at least 2")
     for cond in payload.conditions:
         if cond.field not in VALID_FIELDS:
             raise HTTPException(status_code=400, detail=f"Invalid condition field: {cond.field}")
@@ -58,16 +66,18 @@ def _validate(payload: AlertRuleRequest) -> None:
 
 def _serialize(rule: models.AlertRule) -> dict:
     return {
-        "id":          str(rule.id),
-        "name":        rule.name,
-        "description": rule.description,
-        "enabled":     rule.enabled,
-        "conditions":  rule.conditions or [],
-        "notify_smtp": rule.notify_smtp,
-        "notify_siem": rule.notify_siem,
-        "auto_triage": rule.auto_triage,
-        "created_at":  rule.created_at,
-        "updated_at":  rule.updated_at,
+        "id":             str(rule.id),
+        "name":           rule.name,
+        "description":    rule.description,
+        "enabled":        rule.enabled,
+        "conditions":     rule.conditions or [],
+        "notify_smtp":    rule.notify_smtp,
+        "notify_siem":    rule.notify_siem,
+        "auto_triage":    rule.auto_triage,
+        "window_seconds": rule.window_seconds,
+        "threshold":      rule.threshold,
+        "created_at":     rule.created_at,
+        "updated_at":     rule.updated_at,
     }
 
 
@@ -93,6 +103,8 @@ async def create_alert_rule(
         notify_smtp=payload.notify_smtp,
         notify_siem=payload.notify_siem,
         auto_triage=payload.auto_triage or None,
+        window_seconds=payload.window_seconds,
+        threshold=payload.threshold,
     )
     db.add(rule)
     await db.commit()
@@ -122,14 +134,16 @@ async def update_alert_rule(
     if not rule:
         raise HTTPException(status_code=404, detail="Alert rule not found")
 
-    rule.name        = payload.name.strip()
-    rule.description = payload.description
-    rule.enabled     = payload.enabled
-    rule.conditions  = [c.model_dump() for c in payload.conditions]
-    rule.notify_smtp = payload.notify_smtp
-    rule.notify_siem = payload.notify_siem
-    rule.auto_triage = payload.auto_triage or None
-    rule.updated_at  = datetime.now(timezone.utc).isoformat()
+    rule.name           = payload.name.strip()
+    rule.description    = payload.description
+    rule.enabled        = payload.enabled
+    rule.conditions     = [c.model_dump() for c in payload.conditions]
+    rule.notify_smtp    = payload.notify_smtp
+    rule.notify_siem    = payload.notify_siem
+    rule.auto_triage    = payload.auto_triage or None
+    rule.window_seconds = payload.window_seconds
+    rule.threshold      = payload.threshold
+    rule.updated_at     = datetime.now(timezone.utc).isoformat()
 
     await db.commit()
     await write_audit(db, user, "update_alert_rule",

@@ -1,12 +1,65 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronLeft, Zap, Shield, Clock, Activity, Download, Network } from "lucide-react";
+import { Brain, ChevronLeft, Zap, Shield, Clock, Activity, Download, Network } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
-type Tab = "timeline" | "iocs" | "artifacts" | "mitre";
+type Tab = "timeline" | "iocs" | "artifacts" | "mitre" | "ai";
+
+const KILL_CHAIN_STEPS = [
+  { key: "initial_access",   label: "Initial Access",   short: "Access"   },
+  { key: "discovery",        label: "Discovery",        short: "Recon"    },
+  { key: "lateral_movement", label: "Lateral Movement", short: "Movement" },
+  { key: "impact",           label: "Impact",           short: "Impact"   },
+];
+
+const PHASE_COLOR: Record<string, string> = {
+  initial_access:   "text-severity-low   bg-severity-low/10   border-severity-low/30",
+  discovery:        "text-severity-medium bg-severity-medium/10 border-severity-medium/30",
+  lateral_movement: "text-severity-high  bg-severity-high/10  border-severity-high/30",
+  impact:           "text-severity-critical bg-severity-critical/10 border-severity-critical/30",
+};
+
+function KillChainBanner({ phase }: { phase?: string }) {
+  const current = phase ?? "initial_access";
+  const currentIdx = KILL_CHAIN_STEPS.findIndex((s) => s.key === current);
+
+  return (
+    <div className="card p-3 flex items-center gap-1 overflow-x-auto">
+      <span className="text-xs text-text-faint font-medium whitespace-nowrap mr-2">Kill Chain</span>
+      {KILL_CHAIN_STEPS.map((step, i) => {
+        const isActive  = step.key === current;
+        const isPast    = i < currentIdx;
+        const isFuture  = i > currentIdx;
+        return (
+          <div key={step.key} className="flex items-center gap-1 flex-shrink-0">
+            <div
+              title={step.label}
+              className={[
+                "px-2.5 py-1 rounded border text-xs font-semibold whitespace-nowrap transition-all",
+                isActive  ? PHASE_COLOR[step.key] + " ring-1 ring-current/40" : "",
+                isPast    ? "text-text-faint bg-bg-elevated/50 border-bg-border/50" : "",
+                isFuture  ? "text-text-faint/40 bg-transparent border-bg-border/20" : "",
+              ].join(" ")}
+            >
+              {step.short}
+            </div>
+            {i < KILL_CHAIN_STEPS.length - 1 && (
+              <span className={`text-xs ${i < currentIdx ? "text-text-faint" : "text-text-faint/30"}`}>→</span>
+            )}
+          </div>
+        );
+      })}
+      {current && (
+        <span className={`ml-auto text-xs font-semibold whitespace-nowrap ${PHASE_COLOR[current]?.split(" ")[0] ?? "text-text-muted"}`}>
+          {KILL_CHAIN_STEPS.find((s) => s.key === current)?.label ?? current}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function isPrivateIp(ip: string): boolean {
   if (!ip) return false;
@@ -32,6 +85,17 @@ export default function SessionDetailPage() {
   const [triageSaving,      setTriageSaving]      = useState(false);
   const [triageSaved,       setTriageSaved]       = useState(false);
   const [relatedSessions,   setRelatedSessions]   = useState<any[]>([]);
+
+  // ── AI Analysis state ──────────────────────────────────────────────────────
+  const [aiModels,       setAiModels]       = useState<string[]>([]);
+  const [aiEnabled,      setAiEnabled]      = useState(false);
+  const [selectedModel,  setSelectedModel]  = useState("");
+  const [aiType,         setAiType]         = useState<"threat_narrative" | "triage_assist">("threat_narrative");
+  const [isStreaming,    setIsStreaming]     = useState(false);
+  const [streamingText,  setStreamingText]  = useState("");
+  const [pastAnalyses,   setPastAnalyses]   = useState<any[]>([]);
+  const [triageResult,   setTriageResult]   = useState<any>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -74,13 +138,105 @@ export default function SessionDetailPage() {
   }
 
   if (loading) return <div className="flex items-center justify-center h-64 text-text-muted">Loading session…</div>;
+
   if (!session) return <div className="p-6 text-severity-high">Session not found</div>;
+
+  // Load AI models + past analyses when AI tab is first opened
+  useEffect(() => {
+    if (tab !== "ai" || !id) return;
+    // Fetch available models
+    fetch(apiPath("/llm/models"), { credentials: "include" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d) return;
+        setAiEnabled(d.enabled ?? false);
+        setAiModels(d.models ?? []);
+        if (!selectedModel && d.default_model) setSelectedModel(d.default_model);
+      });
+    // Fetch past analyses
+    fetch(apiPath(`/llm/outputs/session/${id}`), { credentials: "include" })
+      .then((r) => r.ok ? r.json() : { items: [] })
+      .then((d) => setPastAnalyses(d.items ?? []));
+  }, [tab, id]);
+
+  async function startAnalysis() {
+    if (isStreaming || !id) return;
+    abortRef.current = new AbortController();
+    setIsStreaming(true);
+    setStreamingText("");
+    setTriageResult(null);
+
+    try {
+      const resp = await fetch(apiPath(`/llm/analyze/session/${id}`), {
+        method: "POST",
+        signal: abortRef.current.signal,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ analysis_type: aiType, model: selectedModel }),
+      });
+      if (!resp.ok || !resp.body) {
+        const err = await resp.json().catch(() => ({}));
+        setStreamingText(`[Error ${resp.status}] ${err?.detail || "LLM request failed"}`);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulated = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6);
+          if (payload === "[DONE]") {
+            // Try parsing as triage JSON
+            if (aiType === "triage_assist") {
+              try { setTriageResult(JSON.parse(accumulated)); } catch { /* not valid JSON */ }
+            }
+            // Reload past analyses
+            fetch(apiPath(`/llm/outputs/session/${id}`), { credentials: "include" })
+              .then((r) => r.ok ? r.json() : { items: [] })
+              .then((d) => setPastAnalyses(d.items ?? []));
+            break;
+          }
+          try {
+            const chunk = JSON.parse(payload) as string;
+            accumulated += chunk;
+            setStreamingText(accumulated);
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setStreamingText("[Analysis cancelled or connection lost]");
+    } finally {
+      setIsStreaming(false);
+    }
+  }
+
+  function stopAnalysis() {
+    abortRef.current?.abort();
+    setIsStreaming(false);
+  }
+
+  async function applyTriageRecommendation() {
+    if (!triageResult || !id) return;
+    const status = triageResult.recommended_status;
+    const note = triageResult.suggested_note || "";
+    setTriageStatus(status);
+    setTriageNote(note);
+    await saveTriage();
+  }
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "timeline",  label: "Timeline",  count: timeline.length },
     { id: "iocs",      label: "IOCs",      count: iocs.length },
     { id: "artifacts", label: "Artifacts", count: artifacts.length },
     { id: "mitre",     label: "MITRE ATT&CK" },
+    { id: "ai",        label: "AI Analysis" },
   ];
 
   return (
@@ -134,6 +290,9 @@ export default function SessionDetailPage() {
           </a>
         )}
       </div>
+
+      {/* Kill Chain Banner */}
+      <KillChainBanner phase={session.attack_phase} />
 
       {/* Meta cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -316,26 +475,209 @@ export default function SessionDetailPage() {
           )}
 
           {/* MITRE */}
-          {tab === "mitre" && (
-            <div className="space-y-3">
-              {(!session.mitre_techniques || session.mitre_techniques.length === 0) ? (
-                <p className="text-text-faint text-sm text-center py-8">No MITRE techniques mapped</p>
-              ) : session.mitre_techniques.map((t: any, i: number) => (
-                <div key={i} className="card p-4 flex items-start gap-4">
-                  <div className="flex-shrink-0">
-                    <span className="inline-block px-2 py-1 bg-accent/10 text-accent text-xs font-mono font-bold rounded">
-                      {t.technique_id}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-sm text-text-primary">{t.technique_name}</p>
-                    <p className="text-xs text-text-muted mt-0.5">Tactic: {t.tactic}</p>
-                    {t.description && (
-                      <p className="text-xs text-text-faint mt-1.5 leading-relaxed">{t.description}</p>
-                    )}
+          {tab === "mitre" && (() => {
+            const techniques: any[] = session.mitre_techniques || [];
+            if (techniques.length === 0) {
+              return <p className="text-text-faint text-sm text-center py-8">No MITRE techniques mapped</p>;
+            }
+            // Group by tactic
+            const byTactic: Record<string, any[]> = {};
+            for (const t of techniques) {
+              const tac = t.tactic || "Unknown";
+              if (!byTactic[tac]) byTactic[tac] = [];
+              byTactic[tac].push(t);
+            }
+            const tacticOrder = [
+              "Initial Access", "Execution", "Persistence", "Lateral Movement",
+              "Collection", "Discovery", "Command and Control",
+              "Impair Process Control", "Inhibit Response Function", "Evasion", "Impact", "Unknown",
+            ];
+            const sortedTactics = Object.keys(byTactic).sort(
+              (a, b) => (tacticOrder.indexOf(a) ?? 99) - (tacticOrder.indexOf(b) ?? 99)
+            );
+            const uniqueTactics = sortedTactics.length;
+            return (
+              <div className="space-y-4">
+                {/* Coverage header */}
+                <div className="card p-3 flex items-center gap-4 flex-wrap">
+                  <span className="text-sm font-semibold text-text-primary">
+                    {techniques.length} technique{techniques.length !== 1 ? "s" : ""} across {uniqueTactics} tactic{uniqueTactics !== 1 ? "s" : ""}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {sortedTactics.map(tac => (
+                      <span key={tac} className="px-2 py-0.5 rounded-full bg-accent/10 text-accent text-xs font-medium">
+                        {tac} ({byTactic[tac].length})
+                      </span>
+                    ))}
                   </div>
                 </div>
-              ))}
+                {/* Grouped by tactic */}
+                {sortedTactics.map(tactic => (
+                  <div key={tactic}>
+                    <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 px-1">
+                      {tactic}
+                    </h3>
+                    <div className="space-y-2">
+                      {byTactic[tactic].map((t: any, i: number) => (
+                        <div key={i} className="card p-4 flex items-start gap-4">
+                          <div className="flex-shrink-0">
+                            <span className="inline-block px-2 py-1 bg-accent/10 text-accent text-xs font-mono font-bold rounded">
+                              {t.technique_id}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-semibold text-sm text-text-primary">{t.technique_name}</p>
+                            {t.description && (
+                              <p className="text-xs text-text-faint mt-1.5 leading-relaxed">{t.description}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* AI Analysis */}
+          {tab === "ai" && (
+            <div className="space-y-4">
+              {/* Controls */}
+              <div className="card p-4 flex flex-wrap items-center gap-3">
+                <Brain className="w-5 h-5 text-accent flex-shrink-0" />
+                <div className="flex items-center gap-2 flex-wrap flex-1">
+                  {/* Analysis type */}
+                  <select
+                    className="input text-sm py-1.5"
+                    value={aiType}
+                    onChange={(e) => setAiType(e.target.value as "threat_narrative" | "triage_assist")}
+                    disabled={isStreaming}
+                  >
+                    <option value="threat_narrative">Threat Narrative</option>
+                    <option value="triage_assist">Triage Assistant</option>
+                  </select>
+
+                  {/* Model selector */}
+                  {aiEnabled && aiModels.length > 0 ? (
+                    <select
+                      className="input text-sm py-1.5"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      disabled={isStreaming}
+                    >
+                      {aiModels.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  ) : aiEnabled ? (
+                    <input
+                      type="text"
+                      className="input text-sm py-1.5 w-44"
+                      placeholder="Model name"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      disabled={isStreaming}
+                    />
+                  ) : null}
+
+                  {/* Action buttons */}
+                  {!isStreaming ? (
+                    <button
+                      onClick={startAnalysis}
+                      disabled={!aiEnabled}
+                      className="btn-primary text-xs px-4 py-1.5 flex items-center gap-1.5"
+                      title={!aiEnabled ? "LLM disabled — set LLM_ENABLED=true in .env" : undefined}
+                    >
+                      <Brain className="w-3.5 h-3.5" />
+                      Analyze
+                    </button>
+                  ) : (
+                    <button onClick={stopAnalysis} className="btn-secondary text-xs px-4 py-1.5">
+                      Cancel
+                    </button>
+                  )}
+                </div>
+
+                {/* Status indicator */}
+                {!aiEnabled && (
+                  <span className="text-xs text-text-faint bg-bg-elevated px-2.5 py-1 rounded border border-bg-border">
+                    LLM disabled
+                  </span>
+                )}
+                {isStreaming && (
+                  <span className="text-xs text-accent animate-pulse">Generating…</span>
+                )}
+              </div>
+
+              {/* Streaming output */}
+              {streamingText && (
+                <div className="card p-4">
+                  {/* Triage assist JSON result */}
+                  {aiType === "triage_assist" && triageResult ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="text-sm font-semibold text-text-primary">Triage Recommendation</span>
+                        <span className="badge-medium capitalize">{triageResult.recommended_status}</span>
+                        <span className="text-xs text-text-faint">
+                          Confidence: {Math.round((triageResult.confidence ?? 0) * 100)}%
+                        </span>
+                      </div>
+                      {triageResult.reasoning && (
+                        <p className="text-sm text-text-primary leading-relaxed">{triageResult.reasoning}</p>
+                      )}
+                      {triageResult.suggested_note && (
+                        <p className="text-xs text-text-muted italic">&ldquo;{triageResult.suggested_note}&rdquo;</p>
+                      )}
+                      <button onClick={applyTriageRecommendation} className="btn-primary text-xs px-4 py-1.5">
+                        Apply Recommendation
+                      </button>
+                    </div>
+                  ) : (
+                    <pre className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed font-sans">
+                      {streamingText}
+                      {isStreaming && <span className="inline-block w-2 h-4 bg-accent ml-0.5 animate-pulse align-middle" />}
+                    </pre>
+                  )}
+                </div>
+              )}
+
+              {/* Past analyses */}
+              {pastAnalyses.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">Past Analyses</h3>
+                  {pastAnalyses.map((a) => (
+                    <details key={a.id} className="card group">
+                      <summary className="px-4 py-3 flex items-center gap-3 cursor-pointer list-none select-none hover:bg-bg-elevated transition-colors rounded-lg">
+                        <Brain className="w-4 h-4 text-text-faint flex-shrink-0" />
+                        <span className="text-sm font-medium capitalize text-text-primary">
+                          {a.output_type.replace(/_/g, " ")}
+                        </span>
+                        <span className="text-xs text-text-faint font-mono">{a.model_used}</span>
+                        <span className="text-xs text-text-faint ml-auto">{formatDateTime(a.created_at)}</span>
+                      </summary>
+                      <div className="px-4 pb-4 border-t border-bg-border mt-0">
+                        <pre className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed font-sans pt-3">
+                          {a.content}
+                        </pre>
+                      </div>
+                    </details>
+                  ))}
+                </div>
+              )}
+
+              {/* Empty state */}
+              {!streamingText && pastAnalyses.length === 0 && (
+                <div className="text-center py-12 text-text-faint">
+                  <Brain className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">No analyses yet.</p>
+                  <p className="text-xs mt-1">
+                    {aiEnabled
+                      ? "Select an analysis type and click Analyze."
+                      : "Enable LLM in your .env file to use AI analysis."}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>

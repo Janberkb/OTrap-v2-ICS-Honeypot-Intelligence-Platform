@@ -40,6 +40,8 @@ type AlertRule = {
   notify_smtp: boolean;
   notify_siem: boolean;
   auto_triage: string | null;
+  window_seconds: number | null;
+  threshold: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -52,6 +54,8 @@ const EMPTY_RULE = {
   notify_smtp: false,
   notify_siem: false,
   auto_triage: "",
+  window_seconds: "" as string,
+  threshold: "" as string,
 };
 
 function getCSRF(): string {
@@ -94,13 +98,15 @@ export default function AlertRulesPage() {
 
   function openEdit(rule: AlertRule) {
     setForm({
-      name:        rule.name,
-      description: rule.description ?? "",
-      enabled:     rule.enabled,
-      conditions:  rule.conditions.map((c) => ({ ...c, value: Array.isArray(c.value) ? c.value.join(", ") : String(c.value) })),
-      notify_smtp: rule.notify_smtp,
-      notify_siem: rule.notify_siem,
-      auto_triage: rule.auto_triage ?? "",
+      name:           rule.name,
+      description:    rule.description ?? "",
+      enabled:        rule.enabled,
+      conditions:     rule.conditions.map((c) => ({ ...c, value: Array.isArray(c.value) ? c.value.join(", ") : String(c.value) })),
+      notify_smtp:    rule.notify_smtp,
+      notify_siem:    rule.notify_siem,
+      auto_triage:    rule.auto_triage ?? "",
+      window_seconds: rule.window_seconds != null ? String(rule.window_seconds) : "",
+      threshold:      rule.threshold      != null ? String(rule.threshold)      : "",
     });
     setEditTarget(rule);
     setError("");
@@ -139,11 +145,13 @@ export default function AlertRulesPage() {
     setSaving(true);
     setError("");
 
+    const winSec   = form.window_seconds !== "" ? parseInt(form.window_seconds, 10) : null;
+    const thresh   = form.threshold      !== "" ? parseInt(form.threshold,      10) : null;
     const body = {
-      name:        form.name.trim(),
-      description: form.description.trim() || null,
-      enabled:     form.enabled,
-      conditions:  form.conditions.map((c) => ({
+      name:           form.name.trim(),
+      description:    form.description.trim() || null,
+      enabled:        form.enabled,
+      conditions:     form.conditions.map((c) => ({
         field:    c.field,
         operator: c.operator,
         // Convert comma-separated to array for in/not_in operators
@@ -151,9 +159,11 @@ export default function AlertRulesPage() {
           ? c.value.split(",").map((s) => s.trim()).filter(Boolean)
           : c.value,
       })),
-      notify_smtp: form.notify_smtp,
-      notify_siem: form.notify_siem,
-      auto_triage: form.auto_triage || null,
+      notify_smtp:    form.notify_smtp,
+      notify_siem:    form.notify_siem,
+      auto_triage:    form.auto_triage || null,
+      window_seconds: winSec,
+      threshold:      thresh,
     };
 
     const url   = modal === "edit" && editTarget ? apiPath(`/admin/alert-rules/${editTarget.id}`) : apiPath("/admin/alert-rules");
@@ -188,6 +198,7 @@ export default function AlertRulesPage() {
       name: rule.name, description: rule.description, enabled: !rule.enabled,
       conditions: rule.conditions, notify_smtp: rule.notify_smtp,
       notify_siem: rule.notify_siem, auto_triage: rule.auto_triage,
+      window_seconds: rule.window_seconds, threshold: rule.threshold,
     };
     await fetch(apiPath(`/admin/alert-rules/${rule.id}`), {
       method: "PATCH", credentials: "include",
@@ -256,6 +267,11 @@ export default function AlertRulesPage() {
                       {rule.auto_triage && (
                         <span className="badge-warning text-[10px]">auto→{rule.auto_triage.replace("_", " ")}</span>
                       )}
+                      {rule.window_seconds && rule.threshold && (
+                        <span className="badge-noise text-[10px]" title={`Fires after ${rule.threshold} matches within ${rule.window_seconds}s`}>
+                          ⏱ {rule.threshold}× / {rule.window_seconds}s
+                        </span>
+                      )}
                       {rule.conditions.length === 0 && (
                         <span className="text-[10px] text-severity-high">⚠ catch-all</span>
                       )}
@@ -297,6 +313,12 @@ export default function AlertRulesPage() {
                             )}
                           </div>
                         ))}
+                      </div>
+                    )}
+                    {rule.window_seconds && rule.threshold && (
+                      <div className="mt-1 px-3 py-2 rounded-md bg-bg-elevated border border-bg-border text-xs text-text-muted">
+                        <span className="text-text-faint">Correlation: </span>
+                        fires after <strong className="text-accent">{rule.threshold} matching events</strong> within a <strong className="text-accent">{rule.window_seconds}s</strong> window per source IP
                       </div>
                     )}
                     <div className="flex gap-4 pt-1 text-xs text-text-faint">
@@ -403,6 +425,35 @@ export default function AlertRulesPage() {
                   </button>
                 </div>
               ))}
+            </div>
+
+            {/* Correlation window */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-text-faint uppercase tracking-wider">Correlation Window <span className="normal-case font-normal text-text-faint">(optional)</span></p>
+              <div className="bg-bg-elevated rounded-lg p-3 space-y-2">
+                <p className="text-xs text-text-faint">
+                  Leave blank to fire on every matching event. Set both fields to fire only after <em>N</em> matches within a time window (e.g. 10 S7_READ_VAR in 60 s → RECON alert).
+                </p>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-text-muted flex-shrink-0">Fire after</label>
+                  <input
+                    type="number" min={2} max={10000}
+                    className="input text-xs w-24 py-1 h-7"
+                    placeholder="e.g. 10"
+                    value={form.threshold}
+                    onChange={(e) => setForm((f) => ({ ...f, threshold: e.target.value }))}
+                  />
+                  <label className="text-xs text-text-muted flex-shrink-0">matches within</label>
+                  <input
+                    type="number" min={10} max={86400}
+                    className="input text-xs w-24 py-1 h-7"
+                    placeholder="e.g. 60"
+                    value={form.window_seconds}
+                    onChange={(e) => setForm((f) => ({ ...f, window_seconds: e.target.value }))}
+                  />
+                  <span className="text-xs text-text-faint">seconds</span>
+                </div>
+              </div>
             </div>
 
             {/* Actions */}

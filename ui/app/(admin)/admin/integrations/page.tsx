@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Bell, Database, ArrowRight } from "lucide-react";
+import { Bell, Brain, Database, ArrowRight } from "lucide-react";
 import { formatDateTime } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
@@ -21,6 +21,7 @@ function ConfigChip({ active, label }: { active: boolean; label: string }) {
 export default function IntegrationsPage() {
   const [smtp, setSmtp] = useState<any>(null);
   const [siem, setSiEM] = useState<any>(null);
+  const [llm,  setLlm]  = useState<any>(null);
   const [deliveryLog, setDeliveryLog] = useState<any[]>([]);
 
   useEffect(() => {
@@ -28,10 +29,12 @@ export default function IntegrationsPage() {
       fetch(apiPath("/admin/smtp"), { credentials: "include" }).then((r) => r.json()),
       fetch(apiPath("/admin/siem"), { credentials: "include" }).then((r) => r.json()),
       fetch(apiPath("/admin/siem/delivery-log"), { credentials: "include" }).then((r) => r.json()),
-    ]).then(([smtpData, siemData, logData]) => {
+      fetch(apiPath("/admin/llm-config"), { credentials: "include" }).then((r) => r.ok ? r.json() : null),
+    ]).then(([smtpData, siemData, logData, llmData]) => {
       setSmtp(smtpData);
       setSiEM(siemData);
       setDeliveryLog(logData.items ?? []);
+      setLlm(llmData);
     });
   }, []);
 
@@ -97,6 +100,35 @@ export default function IntegrationsPage() {
           </div>
           <Link href="/admin/siem" className="btn-secondary inline-flex items-center gap-2 w-fit">
             Manage SIEM
+            <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+
+        {/* Local LLM */}
+        <div className="card p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Brain className="w-5 h-5 text-accent" />
+              <h2 className="font-semibold text-sm">Local LLM (AI Analysis)</h2>
+            </div>
+            <ConfigChip active={!!llm?.llm_enabled} label={llm?.llm_enabled ? "enabled" : "disabled"} />
+          </div>
+          <div className="space-y-2 text-sm">
+            <div>
+              <p className="text-xs uppercase text-text-faint mb-1">Backend</p>
+              <p className="text-text-muted capitalize">{llm?.llm_backend ?? "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-text-faint mb-1">Base URL</p>
+              <p className="text-xs text-text-muted break-all">{llm?.llm_base_url || "Using env default"}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase text-text-faint mb-1">Default Model</p>
+              <p className="text-text-muted">{llm?.llm_default_model || "Not set"}</p>
+            </div>
+          </div>
+          <Link href="/admin/llm" className="btn-secondary inline-flex items-center gap-2 w-fit">
+            Configure LLM
             <ArrowRight className="w-4 h-4" />
           </Link>
         </div>

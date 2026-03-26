@@ -531,6 +531,7 @@ func (s *Server) emitClassifiedEvent(evType sensorv1.EventType, cls *Classificat
 		"path":           r.URL.Path,
 		"query":          r.URL.RawQuery,
 		"user_agent":     r.Header.Get("User-Agent"),
+		"host":           r.Host,
 		"classification": cls.Label,
 		"detail":         cls.Detail,
 	}

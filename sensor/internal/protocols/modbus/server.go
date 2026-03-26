@@ -305,17 +305,32 @@ func (s *Server) buildReadRegsResponse(txID uint16, unitID, fc byte, data []byte
 	return s.buildMBAP(txID, unitID, resp)
 }
 
-// plausibleRegValue returns a deterministic plausible register value.
+// plausibleRegValue returns a time-varying plausible register value.
+// Values drift slightly over time so that repeated reads of the same address
+// return different values, as a real sensor would — making honeypot detection harder.
 func plausibleRegValue(addr uint16) uint16 {
+	// Use a coarse time bucket (10-second resolution) so values change slowly
+	// rather than on every call, which would look unrealistic.
+	bucket := uint16(time.Now().Unix()/10) & 0x3F // 0–63, wraps every ~10 min
+
 	switch {
 	case addr < 10:
-		return 0x0000 // Status registers: OFF/0
+		// Status registers (coils): mostly OFF, occasionally flicker
+		if (uint16(time.Now().Unix())>>6)%17 == uint16(addr) {
+			return 0x0001
+		}
+		return 0x0000
 	case addr < 100:
-		return 0x0001 // Control registers: 1 (enabled)
+		// Control registers: stable at 1 (enabled), small jitter
+		return 0x0001
 	case addr < 1000:
-		// Process values: simulate temperatures, pressures in realistic ranges
-		base := uint16(100 + (addr%50)*3) // e.g. 100–250 (temperature-like)
-		return base
+		// Process values: temperature/pressure-like, ±3% drift
+		base := uint16(100 + (addr%50)*3) // 100–250 range
+		drift := (bucket + addr) % 8       // 0–7 fluctuation
+		if drift > 4 {
+			return base - (drift - 4)
+		}
+		return base + drift
 	default:
 		return 0x0000
 	}

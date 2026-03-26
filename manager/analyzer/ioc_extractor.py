@@ -70,6 +70,14 @@ def extract_iocs(ev: dict[str, Any]) -> list[dict[str, Any]]:
                 "confidence": 0.99,
             })
 
+        elif artifact_type in ("enip_write_tag", "enip_set_attr"):
+            iocs.append({
+                "type":       "enip_payload",
+                "value":      value[:512],
+                "context":    f"EtherNet/IP CIP write payload captured in {event_type} from {source_ip}",
+                "confidence": 0.97,
+            })
+
         elif artifact_type == "http_probe":
             if _SQL_RE.search(value):
                 iocs.append({
@@ -97,5 +105,27 @@ def extract_iocs(ev: dict[str, Any]) -> list[dict[str, Any]]:
                 "context":    f"Sensitive path accessed from {source_ip}",
                 "confidence": 0.7,
             })
+
+    # Extract User-Agent as IOC — scanner/tool fingerprinting
+    ua = metadata.get("user_agent", "")
+    if ua and event_type.startswith("HMI_"):
+        iocs.append({
+            "type":       "user_agent",
+            "value":      ua[:512],
+            "context":    f"HTTP User-Agent observed from {source_ip}",
+            "confidence": 0.75,
+        })
+
+    # Extract HTTP Host header as domain IOC — C2 domain discovery
+    host = metadata.get("host", "")
+    if host and host not in ("localhost", "127.0.0.1") and "." in host:
+        # Strip port if present
+        domain = host.split(":")[0]
+        iocs.append({
+            "type":       "domain",
+            "value":      domain[:253],
+            "context":    f"HTTP Host header observed from {source_ip} targeting HMI",
+            "confidence": 0.65,
+        })
 
     return iocs

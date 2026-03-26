@@ -63,13 +63,21 @@ async def get_attacker_profile(
     )
     phases = [r.attack_phase for r in phase_rows if r.attack_phase]
 
-    # GeoIP
+    # GeoIP + Threat Intelligence (run concurrently)
     from manager.utils.geoip import lookup
-    geo = await lookup(ip, request.app.state.redis)
+    from manager.utils.threat_intel import lookup_threat_intel
+    import asyncio
+
+    redis = request.app.state.redis
+    geo, threat_intel = await asyncio.gather(
+        lookup(ip, redis),
+        lookup_threat_intel(ip, redis),
+    )
 
     return {
         "ip":             ip,
         "geo":            geo,
+        "threat_intel":   threat_intel,
         "session_count":  int(row.session_count or 0),
         "event_count":    int(row.event_count or 0),
         "ioc_count":      int(row.ioc_count or 0),

@@ -66,10 +66,36 @@
       "Bash(python3 -m json.tool curl -s -b /tmp/otrap_cookies.txt \"http://localhost:8080/api/v1/events/histogram?hours=24\")",
       "Bash(curl -s -b /tmp/otrap_cookies.txt \"http://localhost:8080/api/v1/events/top-attackers?hours=168&limit=3\")",
       "Bash(npm --version)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(ls -la /home/janberkb/Downloads/otrap-v2.0/otrap/ui/app/\\\\\\(operator\\\\\\)/)",
+      "Bash(ls -la /home/janberkb/Downloads/otrap-v2.0/otrap/ui/app/\\\\\\(operator\\\\\\)/reports/)",
+      "Bash(grep -r \"admin.*password\\\\|default.*password\\\\|hardcoded.*secret\" /home/janberkb/Downloads/otrap-v2.0/otrap --include=*.py --include=*.go --include=*.ts --include=*.tsx)",
+      "Bash(grep -r \"debug\\\\|DEBUG\" /home/janberkb/Downloads/otrap-v2.0/otrap/manager /home/janberkb/Downloads/otrap-v2.0/otrap/ui --include=*.py --include=*.tsx --include=*.ts --include=*.js)",
+      "Bash(grep -r \"console.log\\\\|debugger\\\\|pdb\\\\|ipdb\" /home/janberkb/Downloads/otrap-v2.0/otrap/manager /home/janberkb/Downloads/otrap-v2.0/otrap/ui/app --include=*.py --include=*.tsx --include=*.ts)",
+      "Bash(git ls-files:*)",
+      "Bash(protoc --version)",
+      "Bash(go version:*)",
+      "Bash(make proto:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:lmstudio.ai)",
+      "WebFetch(domain:docs.strix.ai)",
+      "WebFetch(domain:ollama.ai)",
+      "WebFetch(domain:ollama.com)",
+      "WebFetch(domain:blog.runreveal.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:www.splunk.com)",
+      "WebFetch(domain:docs.cloud.google.com)",
+      "WebFetch(domain:engineering.mercari.com)",
+      "Bash(find /home/janberkb/Downloads/otrap-v2.0/otrap/manager -name *.py)"
     ],
     "additionalDirectories": [
       "/home/janberkb/Downloads/otrap-v2.0/otrap/ui/app/(operator)/attackers"
     ]
+  },
+  "enabledPlugins": {
+    "playwright@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true
   }
 }

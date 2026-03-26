@@ -111,6 +111,7 @@ enum Protocol {
   PROTOCOL_HTTP     = 3;
   PROTOCOL_HTTPS    = 4;
   PROTOCOL_RAW_TCP  = 5;
+  PROTOCOL_ENIP     = 6;  // EtherNet/IP (Allen-Bradley / Rockwell)
 }
 
 enum EventType {
@@ -146,6 +147,7 @@ enum EventType {
   MODBUS_UNKNOWN_FUNCTION    = 28;
   MODBUS_EXCEPTION_RESPONSE  = 29;
   MODBUS_SESSION_TIMEOUT     = 30;
+  MODBUS_SCANNER_DETECTED    = 31;  // MEI Device Identification (fc=0x2B) — scanner probe
 
   // ── HMI / Web ─────────────────────────────────────────────────
   HMI_ACCESS                 = 40;  // Generic HTTP access
@@ -158,6 +160,18 @@ enum EventType {
   HMI_SENSITIVE_PATH         = 47;  // Severity: MEDIUM
   HMI_SCANNER_DETECTED       = 48;  // Severity: LOW
   HMI_DASHBOARD_ACCESS       = 49;  // Rabbit-hole engagement — Severity: HIGH
+
+  // ── EtherNet/IP (Allen-Bradley / Rockwell) ────────────────────
+  ENIP_LIST_IDENTITY         = 50;  // Severity: LOW  (scanner probe — very common)
+  ENIP_LIST_SERVICES         = 51;  // Severity: LOW
+  ENIP_REGISTER_SESSION      = 52;  // Severity: MEDIUM (active EtherNet/IP session)
+  ENIP_SEND_RRDATA           = 53;  // Severity: MEDIUM (unconnected explicit message)
+  ENIP_CIP_READ_TAG          = 54;  // Severity: MEDIUM (ControlLogix tag read)
+  ENIP_CIP_WRITE_TAG         = 55;  // Severity: HIGH   (ControlLogix tag write)
+  ENIP_CIP_GET_ATTR          = 56;  // Severity: LOW    (attribute enumeration)
+  ENIP_CIP_SET_ATTR          = 57;  // Severity: HIGH   (attribute modification)
+  ENIP_UNKNOWN_COMMAND       = 58;  // Severity: MEDIUM (malformed / unknown cmd)
+  ENIP_SESSION_TIMEOUT       = 59;  // Severity: NOISE
 }
 
 enum Severity {

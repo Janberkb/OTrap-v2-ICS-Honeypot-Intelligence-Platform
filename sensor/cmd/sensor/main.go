@@ -17,6 +17,7 @@ import (
 	"github.com/otrap/sensor/internal/grpcclient"
 	"github.com/otrap/sensor/internal/health"
 	"github.com/otrap/sensor/internal/join"
+	"github.com/otrap/sensor/internal/protocols/enip"
 	"github.com/otrap/sensor/internal/protocols/hmi"
 	"github.com/otrap/sensor/internal/protocols/modbus"
 	"github.com/otrap/sensor/internal/protocols/s7"
@@ -128,6 +129,13 @@ func main() {
 	go func() {
 		if err := hmiServer.ListenAndServe(ctx); err != nil {
 			slog.Error("HMI server error", "error", err)
+		}
+	}()
+
+	enipServer := enip.NewServer(cfg, dispatcher, healthTracker)
+	go func() {
+		if err := enipServer.ListenAndServe(ctx); err != nil {
+			slog.Error("EtherNet/IP server error", "error", err)
 		}
 	}()
 

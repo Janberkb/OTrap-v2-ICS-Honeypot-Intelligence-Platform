@@ -39,9 +39,15 @@ async def run_migrations(engine) -> None:
         await conn.run_sync(Base.metadata.create_all)
         # Idempotent column additions for existing deployments
         for stmt in [
-            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS triage_status TEXT NOT NULL DEFAULT 'new'",
-            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS triage_note TEXT",
-            "ALTER TABLE sensors  ADD COLUMN IF NOT EXISTS sensor_config JSONB",
+            "ALTER TABLE sessions    ADD COLUMN IF NOT EXISTS triage_status   TEXT NOT NULL DEFAULT 'new'",
+            "ALTER TABLE sessions    ADD COLUMN IF NOT EXISTS triage_note      TEXT",
+            "ALTER TABLE sensors     ADD COLUMN IF NOT EXISTS sensor_config    JSONB",
+            "ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS window_seconds   INTEGER",
+            "ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS threshold        INTEGER",
+            "ALTER TABLE app_config  ADD COLUMN IF NOT EXISTS llm_enabled      BOOLEAN",
+            "ALTER TABLE app_config  ADD COLUMN IF NOT EXISTS llm_backend      TEXT",
+            "ALTER TABLE app_config  ADD COLUMN IF NOT EXISTS llm_base_url     TEXT",
+            "ALTER TABLE app_config  ADD COLUMN IF NOT EXISTS llm_default_model TEXT",
         ]:
             await conn.execute(text(stmt))
         # Idempotent index additions (CREATE INDEX IF NOT EXISTS)

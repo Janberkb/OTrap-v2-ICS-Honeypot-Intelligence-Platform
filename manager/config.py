@@ -73,4 +73,12 @@ class Settings(BaseSettings):
 
     # ── LLM ───────────────────────────────────────────────────────────────────
     llm_enabled: bool = False
-    llm_engine_url: str = "http://llm_engine:8001"
+    llm_engine_url: str = "http://llm_engine:8001"  # legacy, kept for compat
+    llm_backend: str = "ollama"                      # "ollama" | "lmstudio"
+    ollama_base_url: str = "http://localhost:11434"
+    lm_studio_base_url: str = "http://localhost:1234"
+    llm_default_model: str = "llama3.2"
+    llm_base_url: str = ""                           # DB-configured URL; overrides backend-specific URLs
+
+
+settings = Settings()
