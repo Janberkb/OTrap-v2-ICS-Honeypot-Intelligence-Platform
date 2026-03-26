@@ -106,6 +106,12 @@ MITRE_ICS_MAPPING: dict[str, dict[str, str]] = {
         "tactic":         "Initial Access",
         "description":    "Connection to Modbus/TCP device.",
     },
+    "MODBUS_SCANNER_DETECTED": {
+        "technique_id":   "T0846",
+        "technique_name": "Remote System Discovery",
+        "tactic":         "Discovery",
+        "description":    "MEI Device Identification (fc=0x2B) — automated scanner probe for device fingerprinting.",
+    },
 
     # ── HMI / Web Events ──────────────────────────────────────────────────────
     "HMI_LOGIN_ATTEMPT": {

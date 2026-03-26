@@ -2,25 +2,19 @@ const createNextIntlPlugin = require("next-intl/plugin");
 const withNextIntl = createNextIntlPlugin("./i18n.ts");
 
 const internalApiBase = process.env.INTERNAL_API_BASE ?? "http://manager:8080";
-const publicApiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
-
-function originOf(url) {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
-  }
-}
-
-const connectSrc = ["'self'", "ws:", "wss:"];
-const publicApiOrigin = originOf(publicApiUrl);
-if (publicApiOrigin && !connectSrc.includes(publicApiOrigin)) {
-  connectSrc.push(publicApiOrigin);
-}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+
+  // Prevent @react-pdf/renderer from being bundled server-side (it's client-only)
+  serverExternalPackages: ["@react-pdf/renderer"],
+
+  webpack: (config) => {
+    // canvas is an optional peer dep of @react-pdf/renderer; not needed in browser
+    config.resolve.alias = { ...config.resolve.alias, canvas: false };
+    return config;
+  },
 
   // Proxy API calls to Manager in production (avoids CORS for same-origin requests)
   async rewrites() {
@@ -32,7 +26,7 @@ const nextConfig = {
     ];
   },
 
-  // Security headers
+  // Static security headers (CSP is handled dynamically in middleware.ts)
   async headers() {
     return [
       {
@@ -43,19 +37,6 @@ const nextConfig = {
           { key: "Referrer-Policy",         value: "strict-origin-when-cross-origin" },
           { key: "X-XSS-Protection",        value: "1; mode=block" },
           { key: "Permissions-Policy",      value: "camera=(), microphone=(), geolocation=()" },
-          {
-            key: "Content-Security-Policy",
-            value: [
-              "default-src 'self'",
-              process.env.NODE_ENV === "development"
-                ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-                : "script-src 'self' 'unsafe-inline'",
-              "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
-              "font-src 'self' fonts.gstatic.com",
-              `connect-src ${connectSrc.join(" ")}`,
-              "img-src 'self' data:",
-            ].join("; "),
-          },
         ],
       },
     ];

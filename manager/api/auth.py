@@ -127,6 +127,10 @@ class ResetPasswordRequest(BaseModel):
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
+_LOGIN_MAX_FAILURES = 10
+_LOGIN_LOCKOUT_TTL  = 900   # 15 minutes
+
+
 @router.post("/login")
 async def login(
     payload: LoginRequest,
@@ -135,18 +139,23 @@ async def login(
     db=Depends(get_db),
 ) -> dict:
     redis = request.app.state.redis
+    ip       = request.client.host if request.client else "unknown"
+    fail_key = f"login.attempts:{ip}"
 
-    # Rate limit: 5 attempts / 60s per IP
-    ip        = request.client.host if request.client else "unknown"
-    rate_key  = f"login_rate:{ip}"
-    attempts  = await redis.incr(rate_key)
-    if attempts == 1:
-        await redis.expire(rate_key, 60)
-    if attempts > 5:
-        raise HTTPException(status_code=429, detail={"error": "RATE_LIMITED"})
+    # Block if too many consecutive failures from this IP
+    failures = await redis.get(fail_key)
+    if failures and int(failures) >= _LOGIN_MAX_FAILURES:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "RATE_LIMITED", "message": "Too many failed attempts. Try again later."},
+        )
 
     user = await models.User.get_by_username(db, payload.username)
     if not user or not verify_bcrypt(payload.password, user.password_hash):
+        # Count failed attempt; start 15-minute window on first failure
+        count = await redis.incr(fail_key)
+        if count == 1:
+            await redis.expire(fail_key, _LOGIN_LOCKOUT_TTL)
         await write_audit(db, None, "login_failed",
                           detail={"username": payload.username}, source_ip=ip)
         raise HTTPException(
@@ -159,9 +168,8 @@ async def login(
                           detail={"reason": "account_inactive"}, source_ip=ip)
         raise HTTPException(status_code=401, detail={"error": "INVALID_CREDENTIALS"})
 
-    # Successful authentication resets the IP-based login limiter so routine
-    # operator actions like repeated sensor onboarding do not lock themselves out.
-    await redis.delete(rate_key)
+    # Successful login clears the failure counter
+    await redis.delete(fail_key)
 
     # Create session in Redis (TTL = SESSION_MAX_AGE)
     token = secrets.token_urlsafe(48)

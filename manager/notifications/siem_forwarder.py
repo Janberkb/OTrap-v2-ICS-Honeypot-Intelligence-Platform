@@ -21,7 +21,7 @@ SEVERITY_NUM   = {"noise": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
 SEVERITY_CEF   = {"noise": 0, "low": 3, "medium": 5, "high": 7, "critical": 10}
 
 
-async def maybe_forward_siem(db, ev: dict, session: models.Session) -> None:
+async def maybe_forward_siem(db, ev: dict, session: models.Session, *, force: bool = False) -> None:
     cfg = await models.SIEMConfig.get(db)
     if not cfg or not cfg.enabled or not cfg.url:
         return
@@ -30,11 +30,12 @@ async def maybe_forward_siem(db, ev: dict, session: models.Session) -> None:
     min_sev   = cfg.min_severity.lower()
     is_cpu_stop = ev.get("event_type") == "S7_CPU_STOP"
 
-    if not is_cpu_stop and SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(min_sev, 0):
+    # force=True (rule-triggered) bypasses severity filter
+    if not is_cpu_stop and not force and SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(min_sev, 0):
         return
 
-    # Rate-limit: 15 min per source_ip+severity (CPU STOP always passes)
-    if not is_cpu_stop:
+    # Rate-limit — skipped when force=True (rule-triggered) or CPU STOP
+    if not force and not is_cpu_stop:
         try:
             import redis.asyncio as aioredis, os
             r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))

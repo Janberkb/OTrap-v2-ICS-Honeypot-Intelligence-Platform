@@ -41,6 +41,14 @@ async def run_migrations(engine) -> None:
         for stmt in [
             "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS triage_status TEXT NOT NULL DEFAULT 'new'",
             "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS triage_note TEXT",
+            "ALTER TABLE sensors  ADD COLUMN IF NOT EXISTS sensor_config JSONB",
+        ]:
+            await conn.execute(text(stmt))
+        # Idempotent index additions (CREATE INDEX IF NOT EXISTS)
+        for stmt in [
+            "CREATE INDEX IF NOT EXISTS idx_sessions_sensor_id     ON sessions (sensor_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sessions_triage_status ON sessions (triage_status)",
+            "CREATE INDEX IF NOT EXISTS idx_iocs_ioc_type          ON iocs (ioc_type)",
         ]:
             await conn.execute(text(stmt))
 

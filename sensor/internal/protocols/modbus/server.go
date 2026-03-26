@@ -226,8 +226,8 @@ func (s *Server) dispatch(
 		return s.buildException(txID, unitID, fc, exIllegalDataValue)
 
 	case fcEncapsulatedTransport:
-		// MEI Device Identification — scanner probe
-		s.emitFC(fc, sensorv1.EventType_MODBUS_UNKNOWN_FUNCTION, "MEI Device Identification (scanner probe)",
+		// MEI Device Identification — scanner probe (fc=0x2B)
+		s.emitFC(fc, sensorv1.EventType_MODBUS_SCANNER_DETECTED, "MEI Device Identification (scanner probe, fc=0x2B)",
 			remoteIP, remotePort, sessionKey, rawPacket, data)
 		// Return basic device identification
 		mei := []byte{

@@ -1,24 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Shield, Zap, AlertTriangle, Activity, Server, Calendar, Globe } from "lucide-react";
+import { Shield, Zap, AlertTriangle, Activity, Server, Calendar, Globe, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useStream } from "../layout";
 import { SeverityBadge, formatTime } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
+const RANGES = [
+  { label: "24h", hours: 24 },
+  { label: "7d",  hours: 168 },
+  { label: "30d", hours: 720 },
+] as const;
+
+type RangeHours = 24 | 168 | 720;
+
+function TrendBadge({ trend }: { trend?: { direction: string; pct: number | null } }) {
+  if (!trend || trend.direction === "flat") return <Minus className="w-3 h-3 text-text-faint" />;
+  if (trend.direction === "up") return (
+    <span className="flex items-center gap-0.5 text-severity-high text-[10px] font-medium">
+      <TrendingUp className="w-3 h-3" />{trend.pct != null ? `${trend.pct}%` : ""}
+    </span>
+  );
+  return (
+    <span className="flex items-center gap-0.5 text-severity-low text-[10px] font-medium">
+      <TrendingDown className="w-3 h-3" />{trend.pct != null ? `${trend.pct}%` : ""}
+    </span>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const { events, stats, connected } = useStream();
+  const [range,          setRange]          = useState<RangeHours>(24);
   const [topAttackers,   setTopAttackers]   = useState<any[]>([]);
   const [recentSessions, setRecentSessions] = useState<any[]>([]);
   const [activeSensors,  setActiveSensors]  = useState<number | null>(null);
   const [sessionsStats,  setSessionsStats]  = useState<any>(null);
   const [histogram,      setHistogram]      = useState<any[]>([]);
 
-  useEffect(() => {
-    fetch(apiPath("/events/top-attackers?limit=8"), { credentials: "include" })
+  const fetchData = useCallback((h: RangeHours) => {
+    fetch(apiPath(`/events/top-attackers?limit=8&hours=${h}`), { credentials: "include" })
       .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setTopAttackers(d.items ?? []); });
 
     fetch(apiPath("/sessions?is_actionable=true&limit=5"), { credentials: "include" })
@@ -27,21 +50,62 @@ export default function DashboardPage() {
     fetch(apiPath("/health"), { credentials: "include" })
       .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setActiveSensors(d.services?.sensors?.count ?? 0); });
 
-    fetch(apiPath("/sessions/stats"), { credentials: "include" })
+    fetch(apiPath(`/sessions/stats?hours=${h}`), { credentials: "include" })
       .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setSessionsStats(d); });
 
-    fetch(apiPath("/events/histogram?hours=24"), { credentials: "include" })
+    fetch(apiPath(`/events/histogram?hours=${h}`), { credentials: "include" })
       .then((r) => r.ok ? r.json() : null).then((d) => { if (d) setHistogram(d.buckets ?? []); });
   }, []);
 
+  useEffect(() => { fetchData(range); }, [range, fetchData]);
+
+  const rangeLabel = RANGES.find((r) => r.hours === range)?.label ?? "24h";
+
   const kpis = [
-    { label: "Total Sessions",   value: stats?.total_sessions ?? "—",      icon: Shield,       color: "text-accent" },
-    { label: "Critical / High",  value: stats?.critical_sessions ?? "—",   icon: AlertTriangle, color: "text-severity-high" },
-    { label: "CPU STOP Events",  value: stats?.cpu_stop_count ?? "—",      icon: Zap,          color: "text-severity-critical" },
-    { label: "Events (24h)",     value: stats?.events_24h ?? "—",          icon: Activity,     color: "text-severity-medium" },
-    { label: "Active Sensors",   value: activeSensors ?? "—",              icon: Server,       color: "text-accent" },
-    { label: "Sessions Today",   value: sessionsStats?.sessions_today ?? "—", icon: Calendar,  color: "text-severity-low" },
-    { label: "Unique IPs (24h)", value: sessionsStats?.unique_ips_24h ?? "—", icon: Globe,     color: "text-text-muted" },
+    {
+      label: "Total Sessions",
+      value: stats?.total_sessions ?? "—",
+      icon: Shield,
+      color: "text-accent",
+    },
+    {
+      label: "Critical / High",
+      value: stats?.critical_sessions ?? "—",
+      icon: AlertTriangle,
+      color: "text-severity-high",
+    },
+    {
+      label: "CPU STOP Events",
+      value: stats?.cpu_stop_count ?? "—",
+      icon: Zap,
+      color: "text-severity-critical",
+    },
+    {
+      label: "Events (live)",
+      value: stats?.events_24h ?? "—",
+      icon: Activity,
+      color: "text-severity-medium",
+    },
+    {
+      label: "Active Sensors",
+      value: activeSensors ?? "—",
+      icon: Server,
+      color: "text-accent",
+    },
+    {
+      label: `Sessions (${rangeLabel})`,
+      value: sessionsStats?.sessions_today ?? "—",
+      icon: Calendar,
+      color: "text-severity-low",
+      trend: sessionsStats?.sessions_trend,
+    },
+    {
+      label: `Unique IPs (${rangeLabel})`,
+      value: sessionsStats?.unique_ips_24h ?? "—",
+      icon: Globe,
+      color: "text-text-muted",
+      trend: sessionsStats?.unique_ips_trend,
+    },
   ];
 
   return (
@@ -54,21 +118,42 @@ export default function DashboardPage() {
             OT Deception Platform · Live threat intelligence
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <div className={`w-2 h-2 rounded-full ${connected ? "bg-severity-low animate-pulse-slow" : "bg-severity-high"}`} />
-          <span className="text-text-muted">{connected ? "Live stream connected" : "Reconnecting…"}</span>
+        <div className="flex items-center gap-3">
+          {/* Time range toggle */}
+          <div className="flex items-center bg-bg-surface border border-bg-border rounded-md p-0.5">
+            {RANGES.map(({ label, hours }) => (
+              <button
+                key={hours}
+                onClick={() => setRange(hours as RangeHours)}
+                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                  range === hours
+                    ? "bg-accent text-white"
+                    : "text-text-muted hover:text-text-primary"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <div className={`w-2 h-2 rounded-full ${connected ? "bg-severity-low animate-pulse-slow" : "bg-severity-high"}`} />
+            <span className="text-text-muted">{connected ? "Live" : "Reconnecting…"}</span>
+          </div>
         </div>
       </div>
 
       {/* ── KPI row ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
-        {kpis.map(({ label, value, icon: Icon, color }) => (
+        {kpis.map(({ label, value, icon: Icon, color, trend }) => (
           <div key={label} className="kpi-card">
             <div className="flex items-center justify-between mb-2">
               <span className="kpi-label">{label}</span>
               <Icon className={`w-4 h-4 ${color}`} />
             </div>
-            <span className={`kpi-value ${color}`}>{value}</span>
+            <div className="flex items-end justify-between">
+              <span className={`kpi-value ${color}`}>{value}</span>
+              {trend && <TrendBadge trend={trend} />}
+            </div>
           </div>
         ))}
       </div>
@@ -184,10 +269,17 @@ export default function DashboardPage() {
             ) : (
               <div className="space-y-1.5">
                 {recentSessions.slice(0, 4).map((s) => (
-                  <div key={s.id} className="flex items-center justify-between text-xs cursor-pointer hover:opacity-80"
-                    onClick={() => router.push(`/sessions/${s.id}`)}>
-                    <span className="font-mono text-text-muted">{s.source_ip}</span>
-                    <div className="flex items-center gap-1.5">
+                  <div key={s.id} className="flex items-center justify-between text-xs">
+                    <button
+                      className="font-mono text-text-muted hover:text-accent hover:underline transition-colors"
+                      onClick={() => router.push(`/attackers/${encodeURIComponent(s.source_ip)}`)}
+                    >
+                      {s.source_ip}
+                    </button>
+                    <div
+                      className="flex items-center gap-1.5 cursor-pointer hover:opacity-80"
+                      onClick={() => router.push(`/sessions/${s.id}`)}
+                    >
                       {s.cpu_stop_occurred && <span className="text-severity-critical">⚡</span>}
                       <SeverityBadge severity={s.severity} />
                     </div>
@@ -199,27 +291,67 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 24h Event Histogram */}
-      {histogram.length > 0 && (
-        <div className="card">
-          <div className="px-4 py-3 border-b border-bg-border">
-            <h2 className="font-semibold text-sm text-text-primary">Events — Last 24 Hours</h2>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Event Histogram */}
+        {histogram.length > 0 && (
+          <div className="xl:col-span-2 card">
+            <div className="px-4 py-3 border-b border-bg-border">
+              <h2 className="font-semibold text-sm text-text-primary">
+                Events — Last {rangeLabel}
+              </h2>
+            </div>
+            <div className="p-4">
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart data={histogram} margin={{ left: -20 }}>
+                  <XAxis dataKey="hour" tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                  <YAxis tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: "#1A2236", border: "1px solid #1E2A3B", borderRadius: 6, fontSize: 12 }}
+                    labelStyle={{ color: "#F8FAFC" }} itemStyle={{ color: "#94A3B8" }}
+                  />
+                  <Bar dataKey="count" fill="#3B82F6" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          <div className="p-4">
-            <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={histogram} margin={{ left: -20 }}>
-                <XAxis dataKey="hour" tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                <YAxis tick={{ fill: "#94A3B8", fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background: "#1A2236", border: "1px solid #1E2A3B", borderRadius: 6, fontSize: 12 }}
-                  labelStyle={{ color: "#F8FAFC" }} itemStyle={{ color: "#94A3B8" }}
-                />
-                <Bar dataKey="count" fill="#3B82F6" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+        )}
+
+        {/* Top Attacker Countries */}
+        {sessionsStats?.top_countries?.length > 0 && (
+          <div className="card">
+            <div className="px-4 py-3 border-b border-bg-border">
+              <h2 className="font-semibold text-sm text-text-primary">Top Attacker Countries</h2>
+            </div>
+            <div className="p-4 space-y-2">
+              {sessionsStats.top_countries.map((c: any, i: number) => {
+                const max = sessionsStats.top_countries[0].count;
+                const pct = Math.round((c.count / max) * 100);
+                return (
+                  <div key={c.country_code} className="flex items-center gap-3">
+                    <span className="text-lg w-7 text-center" title={c.country_name}>
+                      {c.flag || (c.country_code === "XX" ? "❓" : "🌐")}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className={`text-xs truncate ${c.country_code === "PRIVATE" ? "text-text-faint italic" : "text-text-primary"}`}>
+                          {c.country_name}
+                        </span>
+                        <span className="text-xs tabular-nums text-text-muted ml-2">{c.count}</span>
+                      </div>
+                      <div className="h-1 bg-bg-base rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${i === 0 ? "bg-severity-high" : "bg-accent"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

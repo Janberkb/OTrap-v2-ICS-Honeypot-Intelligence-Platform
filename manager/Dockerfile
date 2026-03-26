@@ -2,9 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for cryptography and asyncpg
+# System deps for cryptography, asyncpg, and pg_dump/psql
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev libssl-dev curl \
+    gcc libpq-dev libssl-dev curl postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . ./manager
 
 # Non-root user
-RUN useradd -r -u 1001 -g root otrap && chown -R otrap:root /app
+RUN useradd -r -u 1001 -g root otrap \
+    && mkdir -p /app/backups /app/logs \
+    && chown -R otrap:root /app
 USER otrap
 
 EXPOSE 8080 9443

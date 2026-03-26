@@ -93,6 +93,8 @@ services:
       - management
     volumes:
       - manager_logs:/app/logs
+      - ./backups:/app/backups
+      - ./manager/data:/app/data:ro   # GeoLite2 MMDB files (read-only)
 
   # ── OTrap Sensor ────────────────────────────────────────────────────────────
   sensor:

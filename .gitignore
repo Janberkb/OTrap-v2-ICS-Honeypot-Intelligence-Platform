@@ -1,3 +1,6 @@
+# ── GeoIP databases (large binaries, not committed) ───────────────────────────
+manager/data/*.mmdb
+
 # ── Secrets & local config ────────────────────────────────────────────────────
 .env
 .env.local
@@ -31,6 +34,7 @@ postgres_data/
 redis_data/
 sensor_certs/
 manager_logs/
+backups/
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store

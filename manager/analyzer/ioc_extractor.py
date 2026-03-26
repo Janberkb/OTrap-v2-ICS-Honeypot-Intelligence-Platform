@@ -54,6 +54,14 @@ def extract_iocs(ev: dict[str, Any]) -> list[dict[str, Any]]:
                 "confidence": 0.9,
             })
 
+        elif artifact_type == "password":
+            iocs.append({
+                "type":       "password",
+                "value":      value[:256],
+                "context":    f"Password attempted against HMI from {source_ip}",
+                "confidence": 0.85,
+            })
+
         elif artifact_type in ("s7_cpu_stop_payload", "s7_write_payload"):
             iocs.append({
                 "type":       "s7_payload",

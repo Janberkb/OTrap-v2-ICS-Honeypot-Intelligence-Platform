@@ -58,6 +58,13 @@ SIGNAL_TIER = {
     "critical": "impact",
 }
 
+ATTACK_PHASE_ORDER = {
+    "initial_access":   0,
+    "discovery":        1,
+    "lateral_movement": 2,
+    "impact":           3,
+}
+
 CPU_STOP_EVENT_TYPES = {"S7_CPU_STOP"}
 HIGH_VALUE_EVENT_TYPES = {
     "S7_CPU_STOP", "S7_DOWNLOAD_BLOCK", "S7_DELETE_BLOCK",
@@ -144,6 +151,7 @@ class AnalyzerWorker:
                 mitre=mitre,
                 ioc_count=new_ioc_count,
                 artifact_count=len(ev.get("artifacts", [])),
+                event_type=ev.get("event_type", ""),
             )
 
             await session.commit()
@@ -255,9 +263,10 @@ class AnalyzerWorker:
         mitre: dict,
         ioc_count: int,
         artifact_count: int,
+        event_type: str = "",
     ) -> None:
         """
-        Update session metadata. Severity is monotonically increasing.
+        Update session metadata. Severity and attack_phase are monotonically increasing.
         """
         current_order = SEVERITY_ORDER.get(f"SEVERITY_{db_session.severity.upper()}", 0)
         new_order     = SEVERITY_ORDER.get(f"SEVERITY_{new_severity.upper()}", 0)
@@ -265,6 +274,14 @@ class AnalyzerWorker:
         if new_order > current_order:
             db_session.severity    = new_severity
             db_session.signal_tier = SIGNAL_TIER.get(new_severity, "noise")
+
+        # Attack phase: advance only forward through the kill chain
+        if event_type:
+            inferred_phase = _infer_attack_phase(event_type)
+            current_phase_order = ATTACK_PHASE_ORDER.get(db_session.attack_phase or "initial_access", 0)
+            new_phase_order     = ATTACK_PHASE_ORDER.get(inferred_phase, 0)
+            if new_phase_order > current_phase_order:
+                db_session.attack_phase = inferred_phase
 
         if cpu_stop:
             db_session.cpu_stop_occurred = True
@@ -327,15 +344,16 @@ class AnalyzerWorker:
             logger.warning("Failed to broadcast event", extra={"error": str(e)})
 
     async def _check_notifications(self, ev: dict, db_session: models.Session) -> None:
-        """Trigger SMTP/SIEM notifications if severity threshold met."""
-        # Import here to avoid circular imports
+        """Trigger SMTP/SIEM notifications if severity threshold met, then evaluate alert rules."""
         from manager.notifications.smtp_sender import maybe_send_smtp
         from manager.notifications.siem_forwarder import maybe_forward_siem
+        from manager.notifications.rule_engine import evaluate_rules
 
         try:
             async with self._db_factory() as session:
                 await maybe_send_smtp(session, ev, db_session)
                 await maybe_forward_siem(session, ev, db_session)
+                await evaluate_rules(session, ev, db_session)
         except Exception as e:
             logger.warning("Notification error", extra={"error": str(e)})
 
@@ -377,7 +395,7 @@ def _infer_attack_phase(event_type: str) -> str:
     """Map event type to cyber kill chain phase."""
     if event_type in ("S7_COTP_CONNECT", "MODBUS_CONNECT", "HMI_ACCESS"):
         return "initial_access"
-    if event_type in ("S7_SZL_READ", "S7_READ_VAR", "HMI_SENSITIVE_PATH"):
+    if event_type in ("S7_SZL_READ", "S7_READ_VAR", "HMI_SENSITIVE_PATH", "MODBUS_SCANNER_DETECTED"):
         return "discovery"
     if event_type in ("S7_WRITE_VAR", "MODBUS_WRITE_MULTIPLE", "HMI_LOGIN_ATTEMPT"):
         return "lateral_movement"
@@ -400,6 +418,7 @@ def _classification(event_type: str, metadata: dict) -> str:
         "HMI_LOGIN_SUCCESS": "brute_force_success",
         "HMI_LOGIN_ATTEMPT": "credential_stuffing",
         "S7_MALFORMED_TPKT": "malformed_protocol",
-        "S7_NON_TPKT_TRAFFIC": "port_scanner",
+        "S7_NON_TPKT_TRAFFIC":       "port_scanner",
+        "MODBUS_SCANNER_DETECTED":   "modbus_scanner",
     }
     return labels.get(event_type, "generic_probe")

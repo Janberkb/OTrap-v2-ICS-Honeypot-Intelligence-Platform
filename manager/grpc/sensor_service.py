@@ -117,8 +117,8 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
 
             await session.commit()
 
-        # Build default sensor config from Manager settings
-        config = self._build_sensor_config()
+        # Build sensor config — apply per-sensor overrides stored in DB
+        config = self._build_sensor_config(sensor.sensor_config or {})
 
         logger.info(
             "Sensor joined successfully",
@@ -424,7 +424,8 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
 
         async with self._db_factory() as session:
             sensor = await models.Sensor.get_by_id(session, sensor_id)
-            if sensor is None or sensor.status != "active":
+            # Allow "offline" sensors to reconnect; "pending"/"revoked" cannot.
+            if sensor is None or sensor.status not in ("active", "offline"):
                 await context.abort(grpc.StatusCode.PERMISSION_DENIED, "sensor_not_active")
                 return None
 
@@ -462,7 +463,7 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
 
             async with self._db_factory() as session:
                 sensor = await models.Sensor.get_by_id(session, sensor_id)
-                if sensor is None or sensor.status != "active":
+                if sensor is None or sensor.status not in ("active", "offline"):
                     return None
 
             await self._redis.setex(cache_key, 300, "1")
@@ -498,7 +499,17 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
 
     async def _update_sensor_offline(self, sensor_id: str) -> None:
         try:
-            # Immediately remove both caches so the next poll reflects offline state.
+            # Update DB status to offline
+            from sqlalchemy import update as sa_update
+            async with self._db_factory() as session:
+                await session.execute(
+                    sa_update(models.Sensor)
+                    .where(models.Sensor.id == uuid.UUID(sensor_id))
+                    .values(status="offline")
+                )
+                await session.commit()
+
+            # Clear caches so the next poll reflects offline state immediately.
             await self._redis.delete(f"sensor.active:{sensor_id}")
             await self._redis.delete(f"sensor.health:{sensor_id}")
 
@@ -541,21 +552,22 @@ class SensorServicer(sensor_pb2_grpc.SensorServiceServicer):
             ],
         }
 
-    def _build_sensor_config(self) -> sensor_pb2.SensorConfig:
-        """Build default sensor config from Manager environment."""
+    def _build_sensor_config(self, overrides: dict | None = None) -> sensor_pb2.SensorConfig:
+        """Build sensor config, merging defaults with per-sensor overrides from DB."""
+        o = overrides or {}
         return sensor_pb2.SensorConfig(
-            s7_port=102,
-            modbus_port=502,
-            hmi_http_port=80,
-            hmi_https_port=443,
-            stateful_s7_memory=True,
-            s7_plc_name="S7-300/ET 200M station_1",
-            s7_module_type="6ES7 315-2AG10-0AB0",
-            s7_serial_number="S C-C2UR28922012",
-            brute_force_threshold=5,
-            hmi_brand_name="SIMATIC WinCC",
-            hmi_plant_name="Water Treatment Plant - Unit 3",
-            event_buffer_size=10000,
-            heartbeat_interval_s=30,
-            stream_flush_interval_ms=500,
+            s7_port=o.get("s7_port", 102),
+            modbus_port=o.get("modbus_port", 502),
+            hmi_http_port=o.get("hmi_http_port", 80),
+            hmi_https_port=o.get("hmi_https_port", 443),
+            stateful_s7_memory=o.get("stateful_s7_memory", True),
+            s7_plc_name=o.get("s7_plc_name", "S7-300/ET 200M station_1"),
+            s7_module_type=o.get("s7_module_type", "6ES7 315-2AG10-0AB0"),
+            s7_serial_number=o.get("s7_serial_number", "S C-C2UR28922012"),
+            brute_force_threshold=o.get("brute_force_threshold", 5),
+            hmi_brand_name=o.get("hmi_brand_name", "SIMATIC WinCC"),
+            hmi_plant_name=o.get("hmi_plant_name", "Water Treatment Plant - Unit 3"),
+            event_buffer_size=o.get("event_buffer_size", 10000),
+            heartbeat_interval_s=o.get("heartbeat_interval_s", 30),
+            stream_flush_interval_ms=o.get("stream_flush_interval_ms", 500),
         )

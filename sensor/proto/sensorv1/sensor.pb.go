@@ -112,6 +112,7 @@ const (
 	EventType_MODBUS_UNKNOWN_FUNCTION   EventType = 28
 	EventType_MODBUS_EXCEPTION_RESPONSE EventType = 29
 	EventType_MODBUS_SESSION_TIMEOUT    EventType = 30
+	EventType_MODBUS_SCANNER_DETECTED   EventType = 31 // MEI/Device-ID probe — Severity: LOW
 	// ── HMI / Web ─────────────────────────────────────────────────
 	EventType_HMI_ACCESS           EventType = 40 // Generic HTTP access
 	EventType_HMI_LOGIN_ATTEMPT    EventType = 41 // Severity: MEDIUM
@@ -156,6 +157,7 @@ var (
 		28: "MODBUS_UNKNOWN_FUNCTION",
 		29: "MODBUS_EXCEPTION_RESPONSE",
 		30: "MODBUS_SESSION_TIMEOUT",
+		31: "MODBUS_SCANNER_DETECTED",
 		40: "HMI_ACCESS",
 		41: "HMI_LOGIN_ATTEMPT",
 		42: "HMI_LOGIN_SUCCESS",
@@ -196,6 +198,7 @@ var (
 		"MODBUS_UNKNOWN_FUNCTION":   28,
 		"MODBUS_EXCEPTION_RESPONSE": 29,
 		"MODBUS_SESSION_TIMEOUT":    30,
+		"MODBUS_SCANNER_DETECTED":   31,
 		"HMI_ACCESS":                40,
 		"HMI_LOGIN_ATTEMPT":         41,
 		"HMI_LOGIN_SUCCESS":         42,

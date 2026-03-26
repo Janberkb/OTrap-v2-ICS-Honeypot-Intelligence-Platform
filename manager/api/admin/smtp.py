@@ -114,6 +114,26 @@ async def test_smtp(
         raise HTTPException(status_code=400, detail={"error": "SMTP_SEND_FAILED", "detail": str(e)})
 
 
+@router.get("/delivery-log")
+async def get_smtp_delivery_log(
+    db=Depends(get_db),
+    user=Depends(require_admin),
+) -> dict:
+    logs = await models.SMTPDeliveryLog.list_recent(db)
+    return {"items": [
+        {
+            "id":           str(l.id),
+            "session_id":   str(l.session_id) if l.session_id else None,
+            "recipient":    l.recipient,
+            "subject":      l.subject,
+            "status":       l.status,
+            "error_detail": l.error_detail,
+            "delivered_at": l.delivered_at,
+        }
+        for l in logs
+    ]}
+
+
 def _send_test_email(cfg: models.SMTPConfig, password: str | None) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = "[OTrap] SMTP Test Notification"

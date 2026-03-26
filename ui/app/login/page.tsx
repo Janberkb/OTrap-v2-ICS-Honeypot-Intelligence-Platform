@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiPath } from "@/lib/api";
 import { BrandMark } from "@/components/brand-mark";
@@ -13,22 +13,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error,    setError]    = useState("");
   const [loading,  setLoading]  = useState(false);
-  const [csrf,     setCsrf]     = useState("");
   const [view,     setView]     = useState<View>("login");
   const [fgUser,   setFgUser]   = useState("");
   const [fgLoading,setFgLoading]= useState(false);
 
-  // Fetch CSRF token on mount
-  useEffect(() => {
-    fetch(apiPath("/auth/csrf-token"), { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setCsrf(d.csrf_token ?? ""))
-      .catch(() => {});
-  }, []);
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!csrf) { setError("CSRF token missing — reload the page"); return; }
     setLoading(true);
     setError("");
 
@@ -36,10 +26,7 @@ export default function LoginPage() {
       const res = await fetch(apiPath("/auth/login"), {
         method:      "POST",
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token":  csrf,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       });
 
@@ -65,7 +52,7 @@ export default function LoginPage() {
     try {
       const res = await fetch(apiPath("/auth/forgot-password"), {
         method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: fgUser }),
       });
       const d = await res.json().catch(() => ({}));
@@ -127,7 +114,7 @@ export default function LoginPage() {
                     {error}
                   </div>
                 )}
-                <button type="submit" className="btn-primary w-full" disabled={loading || !csrf}>
+                <button type="submit" className="btn-primary w-full" disabled={loading}>
                   {loading ? (
                     <span className="flex items-center justify-center gap-2">
                       <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
@@ -159,7 +146,7 @@ export default function LoginPage() {
                   <input id="fg-username" type="text" className="input" autoFocus required
                     value={fgUser} onChange={(e) => setFgUser(e.target.value)} />
                 </div>
-                <button type="submit" className="btn-primary w-full" disabled={fgLoading || !csrf}>
+                <button type="submit" className="btn-primary w-full" disabled={fgLoading}>
                   {fgLoading ? "Sending…" : "Send Reset Link"}
                 </button>
                 <div className="text-center">

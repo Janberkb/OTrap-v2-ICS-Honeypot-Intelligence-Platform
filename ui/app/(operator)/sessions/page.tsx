@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
-import { Filter, Download, RefreshCw, ChevronUp, ChevronDown } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Filter, Download, RefreshCw, ChevronUp, ChevronDown, CheckSquare } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
@@ -10,6 +10,15 @@ const SEVERITIES      = ["", "noise", "low", "medium", "high", "critical"];
 const SIGNAL_TIERS    = ["", "noise", "recon", "suspicious", "impact"];
 const PROTOCOLS       = ["", "s7comm", "modbus", "http", "https", "tcp"];
 const TRIAGE_STATUSES = ["", "new", "investigating", "reviewed", "false_positive", "escalated"];
+
+function isPrivateIp(ip: string): boolean {
+  if (!ip) return false;
+  if (ip.startsWith("10.") || ip.startsWith("127.") || ip.startsWith("169.254.") || ip.startsWith("::1")) return true;
+  if (ip.startsWith("192.168.")) return true;
+  const m = ip.match(/^172\.(\d+)\./);
+  if (m && parseInt(m[1]) >= 16 && parseInt(m[1]) <= 31) return true;
+  return false;
+}
 
 const TRIAGE_BADGE: Record<string, string> = {
   new:            "badge-medium",
@@ -42,16 +51,27 @@ type SortDir = "asc" | "desc";
 const SORTABLE = ["severity", "event_count", "ioc_count", "duration_seconds", "started_at"];
 
 export default function SessionsPage() {
-  const router = useRouter();
+  const router       = useRouter();
+  const searchParams = useSearchParams();
   const [sessions,    setSessions]    = useState<any[]>([]);
   const [total,       setTotal]       = useState(0);
   const [page,        setPage]        = useState(0);
   const [loading,     setLoading]     = useState(false);
-  const [filters,     setFilters]     = useState<Filters>(DEFAULT_FILTERS);
-  const [showFilters, setShowFilters] = useState(false);
+  const [filters,     setFilters]     = useState<Filters>(() => ({
+    ...DEFAULT_FILTERS,
+    source_ip:    searchParams.get("source_ip")    ?? "",
+    has_iocs:     searchParams.get("has_iocs")     ?? "",
+    triage_status:searchParams.get("triage_status")?? "",
+  }));
+  const [showFilters, setShowFilters] = useState(
+    () => !!(searchParams.get("source_ip") || searchParams.get("has_iocs") || searchParams.get("triage_status"))
+  );
   const [sortBy,      setSortBy]      = useState("started_at");
   const [sortDir,     setSortDir]     = useState<SortDir>("desc");
   const [showExport,  setShowExport]  = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkStatus,  setBulkStatus]  = useState("reviewing");
+  const [bulkLoading, setBulkLoading] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   const PAGE_SIZE = 50;
@@ -95,8 +115,8 @@ export default function SessionsPage() {
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
-  // Reset page when filters/sort change
-  useEffect(() => { setPage(0); }, [filters, sortBy, sortDir]);
+  // Reset page and selection when filters/sort change
+  useEffect(() => { setPage(0); setSelectedIds(new Set()); }, [filters, sortBy, sortDir]);
 
   function exportCSV() {
     const params = new URLSearchParams({ columns: "id,source_ip,severity,signal_tier,primary_protocol,cpu_stop_occurred,ioc_count,event_count,started_at,updated_at" });
@@ -114,6 +134,41 @@ export default function SessionsPage() {
 
   function setFilter(key: keyof Filters, val: string) {
     setFilters((f) => ({ ...f, [key]: val }));
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === sessions.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(sessions.map((s) => s.id)));
+    }
+  }
+
+  async function applyBulkTriage() {
+    if (!selectedIds.size) return;
+    setBulkLoading(true);
+    try {
+      const r = await fetch(apiPath("/sessions/bulk-triage"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_ids: [...selectedIds], triage_status: bulkStatus }),
+      });
+      if (r.ok) {
+        setSelectedIds(new Set());
+        loadSessions();
+      }
+    } finally {
+      setBulkLoading(false);
+    }
   }
 
   return (
@@ -152,6 +207,38 @@ export default function SessionsPage() {
           </button>
         </div>
       </div>
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-accent/10 border border-accent/30 rounded-lg animate-slide-in">
+          <CheckSquare className="w-4 h-4 text-accent flex-shrink-0" />
+          <span className="text-sm font-medium text-text-primary">{selectedIds.size} selected</span>
+          <div className="flex items-center gap-2 ml-auto">
+            <select
+              className="select text-xs py-1 h-7"
+              value={bulkStatus}
+              onChange={(e) => setBulkStatus(e.target.value)}
+            >
+              {TRIAGE_STATUSES.filter(Boolean).map((s) => (
+                <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+            <button
+              onClick={applyBulkTriage}
+              disabled={bulkLoading}
+              className="btn-primary text-xs px-3 py-1 h-7 disabled:opacity-60"
+            >
+              {bulkLoading ? "Applying…" : "Apply Triage"}
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="btn-secondary text-xs px-3 py-1 h-7"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Filter panel */}
       {showFilters && (
@@ -233,6 +320,14 @@ export default function SessionsPage() {
           <table className="data-table">
             <thead>
               <tr>
+                <th className="w-8">
+                  <input
+                    type="checkbox"
+                    className="w-3.5 h-3.5 accent-accent cursor-pointer"
+                    checked={sessions.length > 0 && selectedIds.size === sessions.length}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
                 <th>Source IP</th>
                 {(["severity", "signal_tier", "protocol", "phase", "event_count", "ioc_count", "duration_seconds", "started_at"] as const).map((col) => {
                   const labels: Record<string, string> = {
@@ -261,12 +356,35 @@ export default function SessionsPage() {
             </thead>
             <tbody>
               {loading && sessions.length === 0 ? (
-                <tr><td colSpan={11} className="text-center text-text-faint py-12">Loading…</td></tr>
+                <tr><td colSpan={12} className="text-center text-text-faint py-12">Loading…</td></tr>
               ) : sessions.length === 0 ? (
-                <tr><td colSpan={11} className="text-center text-text-faint py-12">No sessions match your filters</td></tr>
+                <tr><td colSpan={12} className="text-center text-text-faint py-12">No sessions match your filters</td></tr>
               ) : sessions.map((s) => (
                 <tr key={s.id} onClick={() => router.push(`/sessions/${s.id}`)}>
-                  <td className="font-mono text-xs">{s.source_ip}</td>
+                  <td onClick={(e) => e.stopPropagation()} className="w-8">
+                    <input
+                      type="checkbox"
+                      className="w-3.5 h-3.5 accent-accent cursor-pointer"
+                      checked={selectedIds.has(s.id)}
+                      onChange={() => toggleSelect(s.id)}
+                    />
+                  </td>
+                  <td className="font-mono text-xs">
+                    <span className="flex items-center gap-1.5">
+                      {s.geo?.flag
+                        ? <span title={s.geo.country_name}>{s.geo.flag}</span>
+                        : isPrivateIp(s.source_ip)
+                          ? <span title="Private / internal network address" className="text-[10px] font-semibold px-1 py-0.5 rounded bg-bg-elevated text-text-faint border border-bg-border leading-none">INT</span>
+                          : null
+                      }
+                      <button
+                        className="hover:text-accent hover:underline transition-colors"
+                        onClick={(e) => { e.stopPropagation(); router.push(`/attackers/${encodeURIComponent(s.source_ip)}`); }}
+                      >
+                        {s.source_ip}
+                      </button>
+                    </span>
+                  </td>
                   <td><SeverityBadge severity={s.severity} /></td>
                   <td><SignalTierBadge tier={s.signal_tier} /></td>
                   <td className="text-xs text-text-muted uppercase">{s.primary_protocol}</td>

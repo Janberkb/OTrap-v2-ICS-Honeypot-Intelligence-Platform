@@ -36,6 +36,12 @@ class TriageRequest(BaseModel):
     triage_note: str | None = None
 
 
+class BulkTriageRequest(BaseModel):
+    session_ids: list[str]
+    triage_status: str
+    triage_note: str | None = None
+
+
 @router.get("")
 async def list_sessions(
     severity:      str | None = Query(None),
@@ -52,6 +58,7 @@ async def list_sessions(
     sort_dir:      str | None = Query(None),
     limit:         int = Query(100, ge=1, le=1000),
     offset:        int = Query(0, ge=0),
+    request: Request = None,
     db=Depends(get_db),
     user=Depends(get_current_user),
 ) -> dict:
@@ -66,51 +73,115 @@ async def list_sessions(
         sort_by=sort_by, sort_dir=sort_dir,
         limit=limit, offset=offset,
     )
+    from manager.utils.geoip import lookup_many
+    redis = request.app.state.redis
+    geo_map = await lookup_many([s.source_ip for s in sessions], redis)
+    items = []
+    for s in sessions:
+        item = _session_summary(s)
+        item["geo"] = geo_map.get(s.source_ip, {})
+        items.append(item)
     return {
         "total":  total,
         "offset": offset,
         "limit":  limit,
-        "items":  [_session_summary(s) for s in sessions],
+        "items":  items,
     }
 
 
 @router.get("/stats")
 async def sessions_stats(
+    request: Request,
+    hours: int = Query(24, ge=1, le=720),
     db=Depends(get_db),
     user=Depends(get_current_user),
 ) -> dict:
-    from datetime import date, datetime, timezone, timedelta
+    from datetime import datetime, timezone, timedelta
     from sqlalchemy import text as sa_text
 
-    today   = date.today().isoformat()          # "2026-03-25"
-    ago_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    now       = datetime.now(timezone.utc)
+    ago_cur   = (now - timedelta(hours=hours)).isoformat()
+    ago_prev  = (now - timedelta(hours=hours * 2)).isoformat()
 
     proto_rows = await db.execute(sa_text("""
         SELECT primary_protocol, COUNT(*) AS count
         FROM sessions
+        WHERE started_at >= :since
         GROUP BY primary_protocol
         ORDER BY count DESC
         LIMIT 10
-    """))
+    """), {"since": ago_cur})
     protocols = [
         {"protocol": r.primary_protocol or "unknown", "count": int(r.count)}
         for r in proto_rows
     ]
 
-    sessions_today = (await db.execute(
-        sa_text("SELECT COUNT(*) FROM sessions WHERE started_at >= :today"),
-        {"today": today},
+    # Sessions in current and previous window (for trend)
+    sessions_cur = (await db.execute(
+        sa_text("SELECT COUNT(*) FROM sessions WHERE started_at >= :since"),
+        {"since": ago_cur},
     )).scalar_one()
 
-    unique_ips = (await db.execute(
-        sa_text("SELECT COUNT(DISTINCT source_ip) FROM events WHERE timestamp >= :ago"),
-        {"ago": ago_24h},
+    sessions_prev = (await db.execute(
+        sa_text("SELECT COUNT(*) FROM sessions WHERE started_at >= :prev AND started_at < :cur"),
+        {"prev": ago_prev, "cur": ago_cur},
     )).scalar_one()
+
+    # Unique IPs in current and previous window
+    unique_ips_cur = (await db.execute(
+        sa_text("SELECT COUNT(DISTINCT source_ip) FROM events WHERE timestamp >= :since"),
+        {"since": ago_cur},
+    )).scalar_one()
+
+    unique_ips_prev = (await db.execute(
+        sa_text("SELECT COUNT(DISTINCT source_ip) FROM events WHERE timestamp >= :prev AND timestamp < :cur"),
+        {"prev": ago_prev, "cur": ago_cur},
+    )).scalar_one()
+
+    def _trend(cur: int, prev: int) -> dict:
+        """Return trend direction and percentage change."""
+        cur, prev = int(cur), int(prev)
+        if prev == 0:
+            return {"direction": "up" if cur > 0 else "flat", "pct": None}
+        pct = round((cur - prev) / prev * 100)
+        return {"direction": "up" if pct > 0 else ("down" if pct < 0 else "flat"), "pct": abs(pct)}
+
+    # Top attacker countries
+    top_ip_rows = await db.execute(sa_text("""
+        SELECT source_ip, COUNT(*) AS count
+        FROM sessions
+        WHERE started_at >= :since
+        GROUP BY source_ip
+        ORDER BY count DESC
+        LIMIT 20
+    """), {"since": ago_cur})
+    top_ips = [(r.source_ip, int(r.count)) for r in top_ip_rows]
+
+    from manager.utils.geoip import lookup_many, is_private_ip
+    geo_map = await lookup_many([ip for ip, _ in top_ips], request.app.state.redis)
+
+    country_counts: dict[str, dict] = {}
+    for ip, count in top_ips:
+        if is_private_ip(ip):
+            code, name, flag = "PRIVATE", "Private Network", "🔒"
+        else:
+            geo  = geo_map.get(ip, {})
+            code = geo.get("country_code") or "XX"
+            name = geo.get("country_name") or "Unknown"
+            flag = geo.get("flag", "")
+        if code not in country_counts:
+            country_counts[code] = {"country_code": code, "country_name": name, "flag": flag, "count": 0}
+        country_counts[code]["count"] += count
+    top_countries = sorted(country_counts.values(), key=lambda x: x["count"], reverse=True)[:5]
 
     return {
-        "protocols":      protocols,
-        "sessions_today": int(sessions_today),
-        "unique_ips_24h": int(unique_ips),
+        "hours":            hours,
+        "protocols":        protocols,
+        "sessions_today":   int(sessions_cur),
+        "unique_ips_24h":   int(unique_ips_cur),
+        "sessions_trend":   _trend(sessions_cur, sessions_prev),
+        "unique_ips_trend": _trend(unique_ips_cur, unique_ips_prev),
+        "top_countries":    top_countries,
     }
 
 
@@ -168,6 +239,7 @@ async def export_sessions_csv(
 @router.get("/{session_id}")
 async def get_session(
     session_id: str,
+    request: Request,
     db=Depends(get_db),
     user=Depends(get_current_user),
 ) -> dict:
@@ -181,7 +253,10 @@ async def get_session(
         s = result.scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail={"error": "NOT_FOUND"})
-    return _session_detail(s)
+    d = _session_detail(s)
+    from manager.utils.geoip import lookup
+    d["geo"] = await lookup(s.source_ip, request.app.state.redis)
+    return d
 
 
 @router.patch("/{session_id}/triage")
@@ -208,6 +283,37 @@ async def triage_session(
                       detail={"triage_status": payload.triage_status},
                       source_ip=request.client.host if request.client else None)
     return _session_detail(s)
+
+
+@router.post("/bulk-triage")
+async def bulk_triage_sessions(
+    payload: BulkTriageRequest,
+    request: Request,
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict:
+    if payload.triage_status not in _VALID_TRIAGE:
+        raise HTTPException(status_code=400, detail={"error": "INVALID_TRIAGE_STATUS"})
+    if not payload.session_ids:
+        raise HTTPException(status_code=400, detail={"error": "EMPTY_SESSION_IDS"})
+    if len(payload.session_ids) > 500:
+        raise HTTPException(status_code=400, detail={"error": "TOO_MANY_IDS"})
+
+    from sqlalchemy import select
+    result = await db.execute(
+        select(models.Session).where(models.Session.id.in_(payload.session_ids))
+    )
+    sessions = result.scalars().all()
+    for s in sessions:
+        s.triage_status = payload.triage_status
+        if payload.triage_note is not None:
+            s.triage_note = payload.triage_note[:500]
+    await db.commit()
+
+    await write_audit(db, user, "bulk_triage_sessions",
+                      detail={"triage_status": payload.triage_status, "count": len(sessions)},
+                      source_ip=request.client.host if request.client else None)
+    return {"updated": len(sessions)}
 
 
 @router.get("/{session_id}/events")

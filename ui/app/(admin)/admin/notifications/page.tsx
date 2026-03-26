@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Bell, Send, Eye, EyeOff } from "lucide-react";
-import { ReauthModal } from "@/components/ui";
+import { ReauthModal, formatDateTime } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 const getCSRF = () => document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
 
@@ -11,6 +11,7 @@ const SEVERITIES = ["low", "medium", "high", "critical"];
 export default function NotificationsPage() {
   const [cfg,          setCfg]          = useState<any>({});
   const [form,         setForm]         = useState<any>({});
+  const [logs,         setLogs]         = useState<any[]>([]);
   const [saving,       setSaving]       = useState(false);
   const [testing,      setTesting]      = useState(false);
   const [testResult,   setTestResult]   = useState<{ ok: boolean; message: string } | null>(null);
@@ -21,8 +22,11 @@ export default function NotificationsPage() {
   const [pendingAction,setPendingAction]= useState<"save" | null>(null);
 
   async function load() {
-    const r = await fetch(apiPath("/admin/smtp"), { credentials: "include" });
-    const d = await r.json();
+    const [cfgR, logR] = await Promise.all([
+      fetch(apiPath("/admin/smtp"), { credentials: "include" }),
+      fetch(apiPath("/admin/smtp/delivery-log"), { credentials: "include" }),
+    ]);
+    const d = await cfgR.json();
     setCfg(d);
     setForm({
       host:            d.host ?? "",
@@ -38,6 +42,7 @@ export default function NotificationsPage() {
       cooldown_seconds: d.cooldown_seconds ?? 300,
       enabled:         d.enabled ?? false,
     });
+    if (logR.ok) setLogs((await logR.json()).items ?? []);
   }
 
   useEffect(() => { load(); }, []);
@@ -160,6 +165,43 @@ export default function NotificationsPage() {
             </label>
           ))}
         </div>
+      </div>
+
+      {/* Delivery log */}
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-bg-border">
+          <h2 className="font-semibold text-sm">Email Delivery Log</h2>
+        </div>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Status</th>
+              <th>Recipient</th>
+              <th>Subject</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 ? (
+              <tr><td colSpan={5} className="text-center text-text-faint py-8">No deliveries yet</td></tr>
+            ) : logs.map((l) => (
+              <tr key={l.id}>
+                <td className="text-xs font-mono whitespace-nowrap">{formatDateTime(l.delivered_at)}</td>
+                <td>
+                  <span className={
+                    l.status === "success" ? "badge-low" :
+                    l.status === "skipped" ? "badge-noise" :
+                    "badge-critical"
+                  }>{l.status}</span>
+                </td>
+                <td className="text-xs text-text-muted truncate max-w-xs">{l.recipient ?? "—"}</td>
+                <td className="text-xs text-text-muted truncate max-w-xs">{l.subject ?? "—"}</td>
+                <td className="text-xs text-text-faint truncate max-w-xs">{l.error_detail ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <ReauthModal

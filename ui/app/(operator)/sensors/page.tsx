@@ -10,6 +10,7 @@ import {
   Copy,
   Pencil,
   Plus,
+  Settings2,
   Terminal,
   Trash2,
   Wifi,
@@ -86,6 +87,12 @@ export default function SensorsPage() {
   const [expandedId,       setExpandedId]       = useState<string | null>(null);
   const [expandedSessions, setExpandedSessions] = useState<any[]>([]);
   const [sessionsLoading,  setSessionsLoading]  = useState(false);
+
+  // Q1: sensor config modal
+  const [configSensorId,  setConfigSensorId]  = useState<string | null>(null);
+  const [configForm,      setConfigForm]      = useState<any>({});
+  const [configSaving,    setConfigSaving]    = useState(false);
+  const [configSaved,     setConfigSaved]     = useState(false);
 
   async function load() {
     setLoading(true);
@@ -228,6 +235,37 @@ export default function SensorsPage() {
     const deletable = sensors.filter((s) => s.status !== "revoked").map((s) => s.id);
     setSelected((prev) => prev.size === deletable.length ? new Set() : new Set(deletable));
   }
+  async function openConfig(sensorId: string) {
+    const r = await fetch(apiPath(`/sensors/${sensorId}/config`), { credentials: "include" });
+    if (r.ok) {
+      const d = await r.json();
+      setConfigForm(d.config ?? {});
+    }
+    setConfigSensorId(sensorId);
+    setConfigSaved(false);
+  }
+
+  async function saveConfig() {
+    if (!configSensorId) return;
+    setConfigSaving(true);
+    const r = await fetch(apiPath(`/sensors/${configSensorId}/config`), {
+      method: "PATCH", credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": getCSRF() },
+      body: JSON.stringify({
+        s7_plc_name:          configForm.s7_plc_name          || undefined,
+        s7_module_type:       configForm.s7_module_type        || undefined,
+        s7_serial_number:     configForm.s7_serial_number      || undefined,
+        hmi_brand_name:       configForm.hmi_brand_name        || undefined,
+        hmi_plant_name:       configForm.hmi_plant_name        || undefined,
+        brute_force_threshold: configForm.brute_force_threshold != null
+          ? Number(configForm.brute_force_threshold) : undefined,
+        stateful_s7_memory:   configForm.stateful_s7_memory,
+      }),
+    });
+    setConfigSaving(false);
+    if (r.ok) { setConfigSaved(true); setTimeout(() => setConfigSaved(false), 1500); }
+  }
+
   function copyValue(field: "token" | "install" | "command" | "env", text: string) {
     void navigator.clipboard.writeText(text);
     setCopiedField(field);
@@ -512,11 +550,16 @@ export default function SensorsPage() {
                   <td className="text-xs text-text-muted">{formatRelative(s.last_seen_at)}</td>
                   {isAdmin && (
                     <td>
-                      {s.status !== "revoked" && (
-                        <button onClick={() => startRevoke(s.id)} className="text-text-faint hover:text-severity-critical transition-colors p-1">
-                          <Trash2 className="w-4 h-4" />
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => void openConfig(s.id)} className="text-text-faint hover:text-accent transition-colors p-1" title="Configure sensor">
+                          <Settings2 className="w-4 h-4" />
                         </button>
-                      )}
+                        {s.status !== "revoked" && (
+                          <button onClick={() => startRevoke(s.id)} className="text-text-faint hover:text-severity-critical transition-colors p-1">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -592,6 +635,90 @@ export default function SensorsPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Q1: sensor config modal */}
+      {configSensorId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card w-full max-w-lg p-6 space-y-5 animate-slide-in">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-text-primary flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-accent" />
+                Sensor Configuration
+              </h2>
+              <button onClick={() => setConfigSensorId(null)} className="text-text-faint hover:text-text-primary p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-text-muted">
+              Overrides apply on next sensor reconnect. Leave blank to use sensor defaults.
+            </p>
+
+            <div className="space-y-4">
+              <p className="text-xs font-semibold text-text-faint uppercase tracking-wider">S7 / PLC Identity</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">PLC Name</label>
+                  <input className="input text-xs" placeholder="e.g. SIMATIC S7-300"
+                    value={configForm.s7_plc_name ?? ""}
+                    onChange={(e) => setConfigForm((f: any) => ({ ...f, s7_plc_name: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">Module Type</label>
+                  <input className="input text-xs" placeholder="e.g. CPU 315-2 DP"
+                    value={configForm.s7_module_type ?? ""}
+                    onChange={(e) => setConfigForm((f: any) => ({ ...f, s7_module_type: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">Serial Number</label>
+                  <input className="input text-xs" placeholder="e.g. S C-X4UR71942013"
+                    value={configForm.s7_serial_number ?? ""}
+                    onChange={(e) => setConfigForm((f: any) => ({ ...f, s7_serial_number: e.target.value }))} />
+                </div>
+              </div>
+
+              <p className="text-xs font-semibold text-text-faint uppercase tracking-wider pt-1">HMI Identity</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">HMI Brand</label>
+                  <input className="input text-xs" placeholder="e.g. Siemens"
+                    value={configForm.hmi_brand_name ?? ""}
+                    onChange={(e) => setConfigForm((f: any) => ({ ...f, hmi_brand_name: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">Plant Name</label>
+                  <input className="input text-xs" placeholder="e.g. Water Treatment Plant A"
+                    value={configForm.hmi_plant_name ?? ""}
+                    onChange={(e) => setConfigForm((f: any) => ({ ...f, hmi_plant_name: e.target.value }))} />
+                </div>
+              </div>
+
+              <p className="text-xs font-semibold text-text-faint uppercase tracking-wider pt-1">Detection Settings</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">Brute Force Threshold</label>
+                  <input className="input text-xs" type="number" min={1} max={100} placeholder="default: 5"
+                    value={configForm.brute_force_threshold ?? ""}
+                    onChange={(e) => setConfigForm((f: any) => ({ ...f, brute_force_threshold: e.target.value }))} />
+                </div>
+                <div className="flex items-center gap-2 pt-5">
+                  <input type="checkbox" id="stateful_s7" className="w-4 h-4 accent-accent"
+                    checked={configForm.stateful_s7_memory ?? true}
+                    onChange={(e) => setConfigForm((f: any) => ({ ...f, stateful_s7_memory: e.target.checked }))} />
+                  <label htmlFor="stateful_s7" className="text-xs text-text-muted cursor-pointer">Stateful S7 Memory</label>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button onClick={() => setConfigSensorId(null)} className="btn-secondary text-sm">Cancel</button>
+              <button onClick={() => void saveConfig()} disabled={configSaving} className="btn-primary text-sm disabled:opacity-60 flex items-center gap-2">
+                {configSaving ? "Saving…" : configSaved ? "Saved!" : "Save Configuration"}
+              </button>
+            </div>
           </div>
         </div>
       )}

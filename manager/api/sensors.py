@@ -454,6 +454,65 @@ class RenameSensorRequest(BaseModel):
     name: str
 
 
+class SensorConfigRequest(BaseModel):
+    s7_plc_name:         str | None = None
+    s7_module_type:      str | None = None
+    s7_serial_number:    str | None = None
+    hmi_brand_name:      str | None = None
+    hmi_plant_name:      str | None = None
+    brute_force_threshold: int | None = None
+    stateful_s7_memory:  bool | None = None
+
+
+@router.get("/{sensor_id}/config")
+async def get_sensor_config(
+    sensor_id: str,
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict:
+    result = await db.execute(select(models.Sensor).where(models.Sensor.id == uuid.UUID(sensor_id)))
+    sensor = result.scalar_one_or_none()
+    if not sensor:
+        raise HTTPException(404, {"error": "NOT_FOUND"})
+    defaults = {
+        "s7_plc_name": "S7-300/ET 200M station_1",
+        "s7_module_type": "6ES7 315-2AG10-0AB0",
+        "s7_serial_number": "S C-C2UR28922012",
+        "hmi_brand_name": "SIMATIC WinCC",
+        "hmi_plant_name": "Water Treatment Plant - Unit 3",
+        "brute_force_threshold": 5,
+        "stateful_s7_memory": True,
+    }
+    merged = {**defaults, **(sensor.sensor_config or {})}
+    return {"sensor_id": sensor_id, "config": merged}
+
+
+@router.patch("/{sensor_id}/config")
+async def update_sensor_config(
+    sensor_id: str,
+    payload: SensorConfigRequest,
+    request: Request,
+    db=Depends(get_db),
+    user=Depends(require_admin),
+) -> dict:
+    result = await db.execute(select(models.Sensor).where(models.Sensor.id == uuid.UUID(sensor_id)))
+    sensor = result.scalar_one_or_none()
+    if not sensor:
+        raise HTTPException(404, {"error": "NOT_FOUND"})
+
+    current = dict(sensor.sensor_config or {})
+    updates = payload.model_dump(exclude_none=True)
+    current.update(updates)
+    sensor.sensor_config = current
+    await db.commit()
+
+    await write_audit(db, user, "update_sensor_config",
+                      target_type="sensor", target_id=sensor_id,
+                      detail={"updates": updates},
+                      source_ip=request.client.host if request.client else None)
+    return {"sensor_id": sensor_id, "config": current}
+
+
 @router.patch("/{sensor_id}")
 async def rename_sensor(
     sensor_id: str,

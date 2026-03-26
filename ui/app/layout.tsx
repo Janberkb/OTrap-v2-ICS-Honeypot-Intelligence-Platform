@@ -1,5 +1,6 @@
 // app/layout.tsx
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,11 +17,15 @@ export const viewport: Viewport = {
   themeColor: "#111216",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const activeTheme = "brand";
+// Reading x-nonce causes Next.js to automatically apply the nonce
+// to all inline scripts it generates (RSC payloads, router state, etc.),
+// which is required for nonce-based CSP to work without blocking hydration.
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _nonce = (await headers()).get("x-nonce");
 
   return (
-    <html lang="en" className="dark" data-theme={activeTheme}>
+    <html lang="en" className="dark" data-theme="brand">
       <body>{children}</body>
     </html>
   );

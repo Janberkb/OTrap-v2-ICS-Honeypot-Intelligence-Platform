@@ -2,11 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronLeft, Zap, Shield, Clock, Activity, Download } from "lucide-react";
+import { ChevronLeft, Zap, Shield, Clock, Activity, Download, Network } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
 type Tab = "timeline" | "iocs" | "artifacts" | "mitre";
+
+function isPrivateIp(ip: string): boolean {
+  if (!ip) return false;
+  if (ip.startsWith("10.") || ip.startsWith("127.") || ip.startsWith("169.254.") || ip.startsWith("::1")) return true;
+  if (ip.startsWith("192.168.")) return true;
+  const m = ip.match(/^172\.(\d+)\./);
+  if (m && parseInt(m[1]) >= 16 && parseInt(m[1]) <= 31) return true;
+  return false;
+}
 
 export default function SessionDetailPage() {
   const { id }   = useParams<{ id: string }>();
@@ -20,8 +29,9 @@ export default function SessionDetailPage() {
   const [expanded,     setExpanded]     = useState<Set<number>>(new Set());
   const [triageStatus, setTriageStatus] = useState("new");
   const [triageNote,   setTriageNote]   = useState("");
-  const [triageSaving, setTriageSaving] = useState(false);
-  const [triageSaved,  setTriageSaved]  = useState(false);
+  const [triageSaving,      setTriageSaving]      = useState(false);
+  const [triageSaved,       setTriageSaved]       = useState(false);
+  const [relatedSessions,   setRelatedSessions]   = useState<any[]>([]);
 
   useEffect(() => {
     if (!id) return;
@@ -37,6 +47,14 @@ export default function SessionDetailPage() {
       setArtifacts(artData.items ?? []);
       setTriageStatus(sess.triage_status || "new");
       setTriageNote(sess.triage_note || "");
+      // Fetch related sessions from same IP (exclude current)
+      if (sess?.source_ip) {
+        fetch(apiPath(`/sessions?source_ip=${encodeURIComponent(sess.source_ip)}&limit=6&sort_by=started_at&sort_dir=desc`), { credentials: "include" })
+          .then((r) => r.ok ? r.json() : null)
+          .then((d) => {
+            if (d) setRelatedSessions((d.items ?? []).filter((s: any) => s.id !== id));
+          });
+      }
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -74,7 +92,27 @@ export default function SessionDetailPage() {
         </button>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold font-mono">{session.source_ip}</h1>
+            <h1 className="text-lg font-bold font-mono flex items-center gap-2">
+              {session.geo?.flag
+                ? <span title={session.geo.country_name}>{session.geo.flag}</span>
+                : isPrivateIp(session.source_ip)
+                  ? (
+                    <span
+                      className="flex items-center gap-1 text-xs font-semibold px-1.5 py-0.5 rounded bg-bg-elevated text-text-faint border border-bg-border"
+                      title="Private / internal network address — no GeoIP available"
+                    >
+                      <Network className="w-3 h-3" />INT
+                    </span>
+                  )
+                  : null
+              }
+              <button
+                className="hover:text-accent hover:underline transition-colors"
+                onClick={() => router.push(`/attackers/${encodeURIComponent(session.source_ip)}`)}
+              >
+                {session.source_ip}
+              </button>
+            </h1>
             <SeverityBadge severity={session.severity} />
             <SignalTierBadge tier={session.signal_tier} />
             {session.cpu_stop_occurred && (
@@ -109,6 +147,14 @@ export default function SessionDetailPage() {
           { label: "Closed",      value: session.closed_at ? formatDateTime(session.closed_at) : "Active" },
           ...(session.source_port ? [{ label: "Src Port", value: String(session.source_port) }] : []),
           ...(session.sensor_id   ? [{ label: "Sensor",   value: session.sensor_id.slice(0, 8) + "…" }] : []),
+          ...(session.geo?.country_name
+            ? [{ label: "Country", value: `${session.geo.flag ?? ""} ${session.geo.country_name}`.trim() }]
+            : isPrivateIp(session.source_ip)
+              ? [{ label: "Origin", value: "🔒 Private Network" }]
+              : []
+          ),
+          ...(session.geo?.city ? [{ label: "City",  value: session.geo.city }] : []),
+          ...(session.geo?.org  ? [{ label: "ISP/Org", value: session.geo.org }] : []),
         ].map(({ label, value }) => (
           <div key={label} className="kpi-card">
             <span className="kpi-label">{label}</span>
@@ -294,6 +340,52 @@ export default function SessionDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Related sessions from same IP */}
+      {relatedSessions.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="px-4 py-3 border-b border-bg-border flex items-center justify-between">
+            <h2 className="font-semibold text-sm text-text-primary">
+              Other Sessions from {session.source_ip}
+              <span className="ml-2 text-xs font-normal text-text-faint">({relatedSessions.length} shown)</span>
+            </h2>
+            <button
+              onClick={() => router.push(`/attackers/${encodeURIComponent(session.source_ip)}`)}
+              className="text-xs text-accent hover:underline"
+            >
+              Full profile →
+            </button>
+          </div>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Started</th>
+                <th>Severity</th>
+                <th>Signal</th>
+                <th>Protocol</th>
+                <th>Phase</th>
+                <th>Events</th>
+                <th>Duration</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {relatedSessions.map((s) => (
+                <tr key={s.id} className="cursor-pointer" onClick={() => router.push(`/sessions/${s.id}`)}>
+                  <td className="text-xs font-mono whitespace-nowrap">{formatDateTime(s.started_at)}</td>
+                  <td><SeverityBadge severity={s.severity} /></td>
+                  <td><SignalTierBadge tier={s.signal_tier} /></td>
+                  <td className="text-xs uppercase text-text-muted">{s.primary_protocol}</td>
+                  <td className="text-xs text-text-muted">{s.attack_phase?.replace(/_/g, " ")}</td>
+                  <td className="text-xs tabular-nums">{s.event_count}</td>
+                  <td className="text-xs text-text-muted">{formatDuration(s.duration_seconds)}</td>
+                  <td className="text-xs capitalize text-text-muted">{(s.triage_status || "new").replace(/_/g, " ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

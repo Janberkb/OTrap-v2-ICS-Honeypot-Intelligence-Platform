@@ -13,7 +13,7 @@ GO_BIN      := $(shell go env GOPATH)/bin
 PROTO_VENV  := ./.tools/proto-venv
 PROTO_PY    := $(PROTO_VENV)/bin/python
 
-.PHONY: help proto build-sensor build-manager build-ui dev up down install-manager test smoke ui-smoke s7-test hmi-test clean
+.PHONY: help proto build-sensor build-manager build-ui dev up down install-manager update-ip backup restore test smoke ui-smoke s7-test hmi-test clean
 
 # ─── Help ─────────────────────────────────────────────────────────────────────
 
@@ -92,6 +92,16 @@ up: ## Start full production stack
 
 install-manager: ## Bootstrap .env, start postgres/redis/manager/ui, and persist gRPC CA
 	./scripts/install_manager.sh
+
+update-ip: ## Update SENSOR_PUBLIC_MANAGER_ADDR in .env to current outbound IP (no restart)
+	./scripts/update_ip.sh
+
+backup: ## Dump PostgreSQL database to backups/<timestamp>.sql.gz
+	./scripts/backup.sh
+
+restore: ## Restore PostgreSQL database from FILE=<path>.sql.gz
+	@[ "$(FILE)" ] || (echo "Usage: make restore FILE=backups/otrap_....sql.gz" && exit 1)
+	./scripts/restore.sh "$(FILE)"
 
 down: ## Stop all services
 	docker compose down

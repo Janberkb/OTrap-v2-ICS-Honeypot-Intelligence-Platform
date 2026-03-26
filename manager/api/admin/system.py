@@ -1,16 +1,38 @@
 """
-manager/api/admin/system.py — System metadata and control-plane diagnostics.
+manager/api/admin/system.py — System metadata, control-plane diagnostics, backup/restore.
 """
 
 from __future__ import annotations
 
+import asyncio
+import gzip
 import os
+import pathlib
+import re
+import shutil
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse
 
 from manager.api.auth import require_admin
 
 router = APIRouter(prefix="/system", tags=["admin-system"])
+
+BACKUP_DIR = pathlib.Path("/app/backups")
+_SAFE_NAME = re.compile(r"^otrap_\d{8}_\d{6}\.sql\.gz$")
+
+
+def _pg_env(request: Request) -> dict:
+    s = request.app.state.settings
+    return {
+        **os.environ,
+        "PGPASSWORD": s.postgres_password,
+        "PGHOST":     s.postgres_host,
+        "PGPORT":     str(s.postgres_port),
+        "PGUSER":     s.postgres_user,
+        "PGDATABASE": s.postgres_db,
+    }
 
 
 @router.get("")
@@ -46,6 +68,7 @@ async def get_system_summary(
         },
         "background_jobs": {
             "analyzer_worker": "running" if analyzer_task and not analyzer_task.done() else "stopped",
+            "heartbeat_checker": "running" if getattr(request.app.state, "hb_task", None) and not request.app.state.hb_task.done() else "stopped",
             "llm_engine": "enabled" if settings.llm_enabled else "disabled",
         },
         "retention_policy": {
@@ -68,3 +91,156 @@ async def get_system_summary(
             "docs_enabled": settings.docs_enabled,
         },
     }
+
+
+# ─── Backup / Restore ────────────────────────────────────────────────────────
+
+@router.get("/backups")
+async def list_backups(
+    request: Request,
+    user=Depends(require_admin),
+) -> dict:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    files = sorted(BACKUP_DIR.glob("otrap_*.sql.gz"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return {
+        "backups": [
+            {
+                "filename": f.name,
+                "size_bytes": f.stat().st_size,
+                "created_at": datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc).isoformat(),
+            }
+            for f in files
+        ]
+    }
+
+
+@router.post("/backups", status_code=status.HTTP_202_ACCEPTED)
+async def create_backup(
+    request: Request,
+    user=Depends(require_admin),
+) -> dict:
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    output_path = BACKUP_DIR / f"otrap_{timestamp}.sql.gz"
+    env = _pg_env(request)
+
+    proc = await asyncio.create_subprocess_exec(
+        "pg_dump", "-Fp", "--no-password",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"pg_dump failed: {stderr.decode(errors='replace')[:500]}",
+        )
+
+    with gzip.open(output_path, "wb") as f:
+        f.write(stdout)
+
+    return {
+        "filename": output_path.name,
+        "size_bytes": output_path.stat().st_size,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/backups/{filename}")
+async def download_backup(
+    filename: str,
+    request: Request,
+    user=Depends(require_admin),
+):
+    if not _SAFE_NAME.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = BACKUP_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return FileResponse(
+        path=str(path),
+        media_type="application/gzip",
+        filename=filename,
+    )
+
+
+@router.delete("/backups/{filename}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_backup(
+    filename: str,
+    request: Request,
+    user=Depends(require_admin),
+):
+    if not _SAFE_NAME.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = BACKUP_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    path.unlink()
+
+
+@router.post("/backups/{filename}/restore", status_code=status.HTTP_202_ACCEPTED)
+async def restore_backup(
+    filename: str,
+    request: Request,
+    user=Depends(require_admin),
+) -> dict:
+    if not _SAFE_NAME.match(filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = BACKUP_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return await _do_restore(request, path)
+
+
+@router.post("/restore/upload", status_code=status.HTTP_202_ACCEPTED)
+async def restore_from_upload(
+    file: UploadFile,
+    request: Request,
+    user=Depends(require_admin),
+) -> dict:
+    if not file.filename or not file.filename.endswith(".sql.gz"):
+        raise HTTPException(status_code=400, detail="File must be a .sql.gz backup")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    dest = BACKUP_DIR / f"otrap_{timestamp}.sql.gz"
+    content = await file.read()
+    dest.write_bytes(content)
+    return await _do_restore(request, dest)
+
+
+async def _do_restore(request: Request, path: pathlib.Path) -> dict:
+    env = _pg_env(request)
+
+    # Wipe existing schema (avoids needing to drop/recreate the whole DB)
+    wipe = await asyncio.create_subprocess_exec(
+        "psql", "--no-password", "-c",
+        "DROP SCHEMA public CASCADE; CREATE SCHEMA public;",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    _, wipe_err = await wipe.communicate()
+    if wipe.returncode != 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Schema wipe failed: {wipe_err.decode(errors='replace')[:500]}",
+        )
+
+    # Decompress and pipe into psql
+    sql = gzip.decompress(path.read_bytes())
+    restore = await asyncio.create_subprocess_exec(
+        "psql", "--no-password",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    _, restore_err = await restore.communicate(input=sql)
+    if restore.returncode != 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Restore failed: {restore_err.decode(errors='replace')[:500]}",
+        )
+
+    return {"restored_from": path.name, "status": "ok"}

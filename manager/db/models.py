@@ -42,6 +42,7 @@ class Sensor(Base):
     reported_ip      = Column(Text, nullable=True)
     capabilities     = Column(ARRAY(Text), default=list)
     status           = Column(Text, nullable=False, default="pending")
+    sensor_config    = Column(JSONB, nullable=True, default=None)  # per-sensor config overrides
 
     @classmethod
     async def find_by_token_candidate(cls, session: AsyncSession, token: str) -> Optional["Sensor"]:
@@ -71,8 +72,37 @@ class Sensor(Base):
         await session.execute(
             update(cls)
             .where(cls.id == uuid.UUID(sensor_id))
-            .values(last_seen_at=datetime.now(timezone.utc).isoformat())
+            .values(
+                last_seen_at=datetime.now(timezone.utc).isoformat(),
+                status="active",  # recover sensor if it was marked offline
+            )
         )
+
+    @classmethod
+    async def mark_timed_out_offline(
+        cls, session: AsyncSession, timeout_seconds: int = 300
+    ) -> list[str]:
+        """Mark active sensors with no heartbeat in > timeout_seconds as offline.
+
+        Returns list of affected sensor_id strings.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+        result = await session.execute(
+            select(cls.id).where(
+                cls.status == "active",
+                cls.last_seen_at.isnot(None),
+                cls.last_seen_at < cutoff,
+            )
+        )
+        sensor_ids = [str(row[0]) for row in result.all()]
+        if sensor_ids:
+            await session.execute(
+                update(cls)
+                .where(cls.id.in_([uuid.UUID(sid) for sid in sensor_ids]))
+                .values(status="offline")
+            )
+        return sensor_ids
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -151,10 +181,12 @@ class Session(Base):
     artifacts = relationship("Artifact", back_populates="session", lazy="noload")
 
     __table_args__ = (
-        Index("idx_sessions_source_ip",   "source_ip"),
-        Index("idx_sessions_severity",    "severity"),
-        Index("idx_sessions_signal_tier", "signal_tier"),
-        Index("idx_sessions_started_at",  "started_at"),
+        Index("idx_sessions_source_ip",      "source_ip"),
+        Index("idx_sessions_severity",       "severity"),
+        Index("idx_sessions_signal_tier",    "signal_tier"),
+        Index("idx_sessions_started_at",     "started_at"),
+        Index("idx_sessions_sensor_id",      "sensor_id"),
+        Index("idx_sessions_triage_status",  "triage_status"),
     )
 
     @classmethod
@@ -298,20 +330,25 @@ class Event(Base):
 
     @classmethod
     async def top_attackers(
-        cls, db: AsyncSession, limit: int = 10
+        cls, db: AsyncSession, limit: int = 10, hours: int = 24
     ) -> list[dict]:
+        from datetime import datetime, timezone, timedelta
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
         result = await db.execute(
             text("""
                 SELECT source_ip,
                        COUNT(*)                      AS event_count,
                        MAX(severity)                 AS max_severity,
-                       COUNT(DISTINCT session_id)    AS session_count
+                       COUNT(DISTINCT session_id)    AS session_count,
+                       BOOL_OR(event_type = 'S7_CPU_STOP') AS cpu_stop_ever,
+                       MAX(timestamp)                AS last_seen
                 FROM events
+                WHERE timestamp >= :since
                 GROUP BY source_ip
                 ORDER BY event_count DESC
                 LIMIT :limit
             """),
-            {"limit": limit},
+            {"limit": limit, "since": since},
         )
         return [dict(r._mapping) for r in result]
 
@@ -364,6 +401,7 @@ class IOC(Base):
         UniqueConstraint("session_id", "ioc_type", "value", name="uq_ioc_session_type_value"),
         Index("idx_iocs_value",      "value"),
         Index("idx_iocs_session_id", "session_id"),
+        Index("idx_iocs_ioc_type",   "ioc_type"),
     )
 
     @classmethod
@@ -552,6 +590,29 @@ class SIEMDeliveryLog(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SMTP Delivery Log
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SMTPDeliveryLog(Base):
+    __tablename__ = "smtp_delivery_log"
+
+    id           = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id   = Column(PGUUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    recipient    = Column(Text, nullable=True)
+    subject      = Column(Text, nullable=True)
+    status       = Column(Text, nullable=False)   # success | failed | skipped
+    error_detail = Column(Text, nullable=True)
+    delivered_at = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    async def list_recent(cls, db: AsyncSession, limit: int = 100) -> list["SMTPDeliveryLog"]:
+        result = await db.execute(
+            select(cls).order_by(cls.delivered_at.desc()).limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Audit Log
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -669,4 +730,59 @@ class LLMOutput(Base):
         result = await db.execute(
             select(cls).where(cls.session_id == uuid.UUID(session_id)).order_by(cls.created_at.desc())
         )
+        return list(result.scalars().all())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Alert Rules
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AlertRule(Base):
+    __tablename__ = "alert_rules"
+
+    id          = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name        = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    enabled     = Column(Boolean, default=True, nullable=False)
+    # Conditions: list of {field, operator, value}
+    # Supported fields: severity | protocol | event_type | source_ip | sensor_id
+    # Operators: eq | neq | gte | lte | in | not_in | contains
+    conditions  = Column(JSONB, nullable=False, default=list)
+    # Actions
+    notify_smtp = Column(Boolean, default=False, nullable=False)
+    notify_siem = Column(Boolean, default=False, nullable=False)
+    auto_triage = Column(Text, nullable=True)   # triage_status to auto-set, or None
+    created_at  = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at  = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    async def list_all(cls, db: AsyncSession) -> list["AlertRule"]:
+        result = await db.execute(select(cls).order_by(cls.created_at.asc()))
+        return list(result.scalars().all())
+
+    @classmethod
+    async def get_enabled(cls, db: AsyncSession) -> list["AlertRule"]:
+        result = await db.execute(
+            select(cls).where(cls.enabled == True).order_by(cls.created_at.asc())  # noqa: E712
+        )
+        return list(result.scalars().all())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reports
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id           = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title        = Column(Text, nullable=False)
+    range_label  = Column(Text, nullable=False)    # e.g. "Last 7 Days"
+    range_hours  = Column(Integer, nullable=False)  # 24 / 168 / 720
+    generated_at = Column(Text, nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+    data         = Column(JSONB, nullable=True)     # full data snapshot
+
+    @classmethod
+    async def list_all(cls, db: AsyncSession) -> list["Report"]:
+        result = await db.execute(select(cls).order_by(cls.generated_at.desc()))
         return list(result.scalars().all())

@@ -8,7 +8,7 @@ import { BrandMark } from "@/components/brand-mark";
 import {
   LayoutDashboard, Shield, Activity, Radio,
   Settings, LogOut, Users, Database, FileText,
-  WifiOff, KeyRound, X, Bell
+  WifiOff, KeyRound, X, Bell, HardDriveDownload, Bug, Target, Zap, FileDown
 } from "lucide-react";
 
 // ─── Live Stream Context ────────────────────────────────────────────────────
@@ -216,15 +216,20 @@ export default function OperatorLayout({ children }: { children: React.ReactNode
   const navItems: NavItem[] = [
     { href: "/dashboard",  label: "Dashboard",   icon: LayoutDashboard },
     { href: "/sessions",   label: "Sessions",    icon: Shield },
+    { href: "/attackers",  label: "Attackers",   icon: Target },
+    { href: "/iocs",       label: "IOCs",        icon: Bug },
     { href: "/sensors",    label: "Sensors",     icon: Radio },
     { href: "/health",     label: "Health",      icon: Activity },
+    { href: "/reports", label: "Reports", icon: FileDown },
   ];
 
   const adminItems: NavItem[] = user?.role === "superadmin" ? [
     { href: "/admin",               label: "System",       icon: Settings, exact: true },
     { href: "/admin/users",         label: "Users",        icon: Users },
     { href: "/admin/integrations",  label: "Integrations", icon: Database, aliases: ["/admin/notifications", "/admin/siem"] },
+    { href: "/admin/alert-rules",   label: "Alert Rules",  icon: Zap },
     { href: "/admin/audit",         label: "Audit Log",    icon: FileText },
+    { href: "/admin/backup",        label: "Backup",       icon: HardDriveDownload },
   ] : [];
 
   return (

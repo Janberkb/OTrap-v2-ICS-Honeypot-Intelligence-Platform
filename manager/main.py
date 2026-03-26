@@ -22,7 +22,6 @@ from manager.grpc.sensor_service import SensorServicer
 from manager.grpc import sensor_pb2_grpc
 from manager.analyzer.worker import AnalyzerWorker
 from manager.api.routers import api_router
-from manager.security.csrf import CSRFMiddleware
 
 logger = logging.getLogger("otrap.manager")
 
@@ -77,6 +76,10 @@ def create_app() -> FastAPI:
         retention_task = asyncio.create_task(_run_audit_retention(session_factory))
         app.state.retention_task = retention_task
 
+        # ── Sensor Heartbeat Checker ──────────────────────────────────────────
+        hb_task = asyncio.create_task(_run_sensor_heartbeat_checker(session_factory, redis))
+        app.state.hb_task = hb_task
+
         # ── Initial admin user ────────────────────────────────────────────────
         await _ensure_initial_admin(session_factory, settings)
 
@@ -85,6 +88,7 @@ def create_app() -> FastAPI:
         # ── Shutdown ──────────────────────────────────────────────────────────
         analyzer_task.cancel()
         retention_task.cancel()
+        hb_task.cancel()
         await grpc_server.stop(grace=5)
         await redis.aclose()
         await engine.dispose()
@@ -109,13 +113,52 @@ def create_app() -> FastAPI:
             allow_headers=["*"],
         )
 
-    # ── CSRF ──────────────────────────────────────────────────────────────────
-    app.add_middleware(CSRFMiddleware)
-
     # ── Routes ────────────────────────────────────────────────────────────────
     app.include_router(api_router, prefix="/api/v1")
 
     return app
+
+
+async def _run_sensor_heartbeat_checker(session_factory, redis) -> None:
+    """Every 60s: mark active sensors with no heartbeat in >5min as offline."""
+    import json
+    from manager.db import models
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            async with session_factory() as db:
+                timed_out = await models.Sensor.mark_timed_out_offline(db, timeout_seconds=300)
+                if timed_out:
+                    # Write audit entries in the same transaction
+                    for sid in timed_out:
+                        await models.AuditLog.write(
+                            db,
+                            user_id=None,
+                            username="system",
+                            action="sensor_offline",
+                            target_type="sensor",
+                            target_id=sid,
+                            detail={"reason": "heartbeat_timeout"},
+                        )
+                    await db.commit()
+
+                    # Clear Redis caches and broadcast SSE outside the DB transaction
+                    for sid in timed_out:
+                        await redis.delete(f"sensor.active:{sid}")
+                        await redis.delete(f"sensor.health:{sid}")
+                        await redis.publish(
+                            "sse.broadcast",
+                            json.dumps({
+                                "type": "health_update",
+                                "data": {"sensor_id": sid, "status": "offline"},
+                            }),
+                        )
+                        logger.info("Sensor timed out → offline: %s", sid)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error("Sensor heartbeat checker failed: %s", e)
 
 
 async def _run_audit_retention(session_factory) -> None:

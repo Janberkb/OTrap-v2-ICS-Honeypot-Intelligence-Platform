@@ -1,324 +1,201 @@
-# OTrap v2.0 — Geliştirme ve Düzeltme Planı
+# OTrap v2.0 — Geliştirme Planı
 
-Her adım tamamlandığında onay beklenir. Küçük, test edilebilir parçalar halinde ilerlenecektir.
-
----
-
-## BLOK A — Hızlı Düzeltmeler (Mevcut veriyi daha iyi göster)
-
-### A1 — IOC Extractor: IP adresini her severity'de yaz
-**Dosya:** `manager/analyzer/ioc_extractor.py`
-**Sorun:** Kaynak IP IOC'u sadece HIGH ve CRITICAL eventlerde yazılıyor.
-Bu yüzden Modbus sessionlarının çoğunda (medium severity) attacker IP IOC olarak görünmüyor.
-**Düzeltme:** Severity koşulunu kaldır, her event için kaynak IP'yi IOC olarak yaz.
-**Test:** Yeni bir Modbus bağlantısı aç → session IOC tab'ında IP görünmeli.
+Her faz tamamlandığında **bekle**, kullanıcı **"devam et"** deyince bir sonraki faza geç.
 
 ---
 
-### A2 — Users: Kullanıcı düzenleme formu
-**Dosya:** `ui/app/(admin)/admin/users/page.tsx`
-**Sorun:** `editTarget` state'i ve `Pencil` ikonu import edilmiş ama edit formu hiç implement edilmemiş.
-Kullanıcının şifresini, rolünü veya email'ini değiştirmenin yolu yok.
-**Düzeltme:**
-- Tabloya "Edit" (kalem) butonu ekle
-- Edit form: email, role, opsiyonel yeni şifre alanları
-- `PUT /admin/users/{id}` API'yi çağır
-**Test:** Kullanıcıya tıkla → form açılsın → rol değiştir → kaydet → listede güncellensin.
+## TAMAMLANAN FAZLAR
+
+### FAZ A — Hızlı Düzeltmeler ✅
+- A1 IOC Extractor: IP adresini her severity'de yaz
+- A2 Users: Kullanıcı düzenleme formu
+- A2b Şifre Değiştirme / Sıfırlama
+- A3 Session Detail: Eksik alanları göster
+- A4 Session Detail: Timeline'da dst_port göster
+- A5 Session Detail: Event metadata modal
+- A6 Session Detail: MITRE description göster
+- A7 Audit Log: Filtreleme paneli
+- A8 Audit Log: Eksik ACTION_COLORS + CSV export
+
+### FAZ B — Session Triage Workflow ✅
+- B1 Session status alanı (DB kolonu: triage_status, triage_note)
+- B2 `PATCH /sessions/{id}/triage` API endpoint
+- B3 Sessions listesine Status kolonu + triage_status filtresi
+- B4 Session detail: triage panel
+
+### FAZ C — Dashboard Güçlendirme ✅
+- C1 3 yeni KPI: Active Sensors, Sessions Today, Unique IPs (24h)
+- C2 Protocol Distribution bar chart
+- C3 Events — Last 24 Hours histogram
+- C4 Live feed satırları tıklanabilir → session detayına navigate
+
+### FAZ D — Sensor Geliştirmeleri ✅
+- D1 Sensor rename (UI + API)
+- D2 Sensor linked sessions (expand row)
+
+### FAZ E — Entegrasyon Genişletme ✅
+- E1 Syslog / CEF export
+- E2 Generic Webhook alert
+- E3 Alert throttle / dedup (Redis cooldown)
+
+### FAZ F — UX / Export ✅
+- F1 Sessions tablosunda kolon sıralama
+- F2 JSON / STIX 2.1 export
+- F3 Notification bell
+
+### FAZ G — Altyapı ✅
+- G1 `make update-ip` komutu
+- G2 Backup/Restore scripti
+- G3 DB index optimizasyonu
+
+### FAZ H — Güvenilirlik ✅
+- H1 Sensor heartbeat timeout → auto-offline
+- H2 DB migration kontrolü (run_migrations idempotent)
+
+### FAZ I — GeoIP Entegrasyonu ✅
+- I1 Backend GeoIP lookup (MaxMind MMDB + Redis cache)
+- I2 Session detail ve list'te ülke bayrağı
+- I3 Dashboard: Top Attacker Countries
+
+### FAZ J — IOC Global View ✅
+- J1 Global IOC endpoint
+- J2 IOC Global View sayfası (UI)
+
+### FAZ K — Güvenlik Sertleştirme ✅
+- K1 CSP nonce tabanlı, unsafe-inline kaldır
+- K2 Login rate limiting
+
+### FAZ N — Dashboard Derinleştirme ✅
+- N1 KPI trend okları (24h vs önceki 24h karşılaştırması)
+- N2 Dashboard zaman aralığı seçici (24h / 7d / 30d)
+
+### FAZ O — Operasyonel İyileştirmeler ✅
+- O1 Toplu session triage (bulk triage — checkbox + action bar)
+- O2 SMTP delivery log (model + API + UI)
+
+### FAZ P — Saldırgan İstihbarat Sayfası ✅
+- P1 Attacker IP profil sayfası `/attackers/{ip}`
+- P2 Session detayında aynı IP'den ilişkili sessionlar
+- Attackers index sayfası `/attackers` (Top 50 IPs, 24h/7d/30d toggle)
+
+### FAZ Q — Gelişmiş Konfigürasyon ✅
+- Q1 Sensor protokol konfigürasyonu (UI'dan enable/disable + PLC kimliği)
+- Q2 Alert rule engine (CRUD + condition matcher + notify/auto-triage)
+
+### FAZ R1 — Raporlama: Temel Sistem ✅
+- Reports tablosu (DB model: id, title, range_label, range_hours, generated_at, data JSONB)
+- `GET/POST /reports`, `GET/DELETE /reports/{id}`, `POST /reports/bulk-delete` API endpoints
+- `/reports` sayfası: rapor listesi, checkbox ile tekli/toplu silme
+- "Generate Report" modal: başlık + zaman aralığı seçimi, tüm verileri snapshot olarak kaydeder
+- `/print/report?id=xxx` ile kaydedilmiş raporu açma
 
 ---
 
-### A2b — Şifre Değiştirme / Sıfırlama
-**İlgili dosyalar:**
-- `manager/api/admin/users.py` (admin → kullanıcı şifresi sıfırlama)
-- `manager/api/auth.py` (kullanıcı kendi şifresini değiştirme)
-- `ui/app/(admin)/admin/users/page.tsx` (admin panel)
-- `ui/app/login/page.tsx` (login sayfası)
-
-**Parça 1 — Admin: kullanıcı şifresini sıfırlama**
-- `PUT /admin/users/{id}` endpoint'ine `new_password` alanı ekle (opsiyonel, min 12 karakter)
-- Users edit formuna "New Password" alanı ekle (boş bırakılırsa şifre değişmez)
-- Test: Admin → edit user → yeni şifre gir → kaydet → eski şifreyle giriş yapılamadığını doğrula
-
-**Parça 2 — Kullanıcı: kendi şifresini değiştirme**
-- `POST /auth/change-password` endpoint'i ekle: `{ current_password, new_password }`
-- Mevcut şifre doğrulanır, yeni şifre min 12 karakter kontrolü yapılır
-- UI: Header/profil alanına "Change Password" modal ekle (tüm roller erişebilir)
-- Test: Giriş yap → şifre değiştir → yeni şifreyle çıkış/giriş yap
-
-**Parça 3 — Login sayfası: "Şifremi unuttum" akışı**
-- SMTP yapılandırılmışsa: reset token üret, email gönder, token ile yeni şifre set et
-- SMTP yapılandırılmamışsa: "Şifrenizi yöneticinizle sıfırlatın" mesajı göster
-- `POST /auth/forgot-password` → token üret + mail gönder
-- `POST /auth/reset-password` → token doğrula + şifreyi güncelle
-- Test: SMTP aktifken → email gel → link tıkla → şifre sıfırla
+## BEKLEYEN FAZLAR
 
 ---
 
-### A3 — Session Detail: Eksik alanları göster
-**Dosya:** `ui/app/(operator)/sessions/[id]/page.tsx`
-**Sorun:** API `source_port`, `sensor_id`, `closed_at`, `metadata` döndürüyor ama UI'da hiçbiri gösterilmiyor.
-**Düzeltme:** Meta cards grid'ine şu alanları ekle:
-- Source Port (varsa)
-- Sensor (sensor_id — tıklanabilir olursa daha iyi)
-- Closed At (varsa, yoksa "Active")
-**Test:** Session detail aç → yeni alanlar meta cards'da görünmeli.
+### FAZ R2 — Rapor Görüntüleme UX ⏳
+
+**Sorun:** "View / Print" butonu yeni sekme açıyor. Kullanıcı raporu görür, Close'a basar → sekme kapanır. Bu akış mantıksız ve kullanışsız.
+
+**Çözüm:** Ayrı sekme yerine `/reports` sayfası içinde **tam ekran overlay modal**.
+- "View / Print" butonuna basınca rapor içeriği aynı sayfa içinde tam ekran overlay olarak açılır
+- Overlay'in üstünde ince action bar: rapor başlığı + "Print / Save as PDF" + "✕ Close"
+- ✕'e basınca overlay kapanır, kullanıcı rapor listesine döner
+- `window.print()` ile yazdırma tetiklenir; `@media print` overlay dışını gizler
+- Yeni sekme açılmaz, `window.close()` çağrılmaz
+
+**Değişecek dosyalar:**
+- `ui/app/(operator)/reports/page.tsx` — modal state + overlay renderer eklenir
+- `ui/app/print/report/page.tsx` — artık sadece standalone fallback (doğrudan URL açılırsa), overlay versiyonu `reports/page.tsx` içinde inline olur
 
 ---
 
-### A4 — Session Detail: Timeline'da dst_port göster
-**Dosya:** `ui/app/(operator)/sessions/[id]/page.tsx`
-**Sorun:** Timeline event card'larında `dst_port` alanı mevcut ama gösterilmiyor.
-Her event hangi porta gittiğini göstermek forensics için değerlidir.
-**Düzeltme:** Timeline card'ının alt satırına `→ port :XXX` bilgisini ekle (sadece varsa).
-**Test:** S7 session timeline aç → eventlerde `:102` gibi port görünmeli.
+### FAZ R3 — Rapor Dark Theme Tasarımı ⏳
+
+**Sorun:** Mevcut rapor beyaz/kurumsal görünümlü. Uygulama koyu tema kullanıyor; rapor bununla uyumsuz.
+
+**Çözüm:** Uygulamanın koyu teması PDF'e taşınır. `print-color-adjust: exact` ile arka plan renkleri baskıda korunur. Kullanıcı "Background graphics" aktif ederse full dark, etmezse beyaz üzerine düşer — her iki durumda okunabilir.
+
+**Renk Paleti:**
+
+| Kullanım | Renk |
+|---|---|
+| Sayfa zemini | `#080c14` |
+| Kart / surface | `#0f1623` |
+| Yükseltilmiş alan | `#162032` |
+| Kenarlık | `#1e2d45` |
+| Ana metin | `#f0f4ff` |
+| İkincil metin | `#94a3b8` |
+| Accent | `#3b82f6` |
+
+**Tasarım Detayları:**
+
+1. **Header** — koyu panel, sol kenarda 4px mavi accent şerit; sağda CONFIDENTIAL rozeti (amber)
+2. **Bölüm başlıkları** — `border-left: 3px solid accent` + uppercase + sağa uzanan `#1e2d45` divider
+3. **KPI kartlar** — `#162032` bg + `#1e2d45` border; alert kartlarda kırmızı tint
+4. **Dağılım barları** — koyu kart içinde; bar zemini `#1e2d45`, dolgu uygulamadaki severity/protocol renkleri
+5. **Event Timeline** — SVG koyu bg, ızgara `#1e2d45`, barlar kırmızı/turuncu/mavi yoğunluk skalası
+6. **Tablolar** — header `#162032`, tek/çift satır `#0f1623`/`#111827`, kenarlık `#1e2d45`; severity badge'leri uygulamadaki tam renkli rozetler
+7. **Footer** — `#0f1623` panel, CONFIDENTIAL amber
+
+**Print CSS eklentileri:**
+```css
+* { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+@page { size: A4 portrait; margin: 14mm 12mm; }
+```
+
+Action bar'a bilgi notu eklenir: _"Enable Background graphics in print dialog for dark theme"_
+
+**Değişecek dosyalar:**
+- `ui/app/(operator)/reports/page.tsx` — overlay renderer bölümündeki tüm inline style'lar güncellenir
 
 ---
 
-### A5 — Session Detail: Event metadata modal
-**Dosya:** `ui/app/(operator)/sessions/[id]/page.tsx`
-**Sorun:** Timeline'daki her event'e tıklanınca `event_metadata` JSON içeriği görünmüyor.
-Modbus'ta function_code/register_address, S7'de szl_id gibi kritik alanlar bu metadata'da.
-**Düzeltme:** Timeline event card'ına tıklanabilir yapı ekle → altında expand eden JSON detay bölümü açılsın (accordion).
-**Test:** Modbus eventine tıkla → metadata JSON açılsın (function_code: 3 vs.).
+### FAZ L — Bug Düzeltmeleri (Sensör Doğruluğu) ⏳
+
+**L1 — HMI POST Body Parse Hatası**
+- **Dosya:** `sensor/internal/protocols/hmi/server.go`
+- **Sorun:** POST body okunmuyor (`body := ""`). SQLi / XSS payload'ları kaçırılıyor.
+- **Düzeltme:** `io.LimitReader` ile max 4KB oku, `combined`'a ekle, `r.Body.Close()` çağır.
+
+**L2 — Attack Phase Güncellenmesi**
+- **Dosya:** `manager/analyzer/worker.py`
+- **Sorun:** `attack_phase` ilk event'e bakılarak set ediliyor, hiç güncellenmiyor. CPU STOP gelse bile `initial_access` kalıyor.
+- **Düzeltme:** `_update_session`'da her event'te `_infer_attack_phase` daha ileri aşamayı döndürüyorsa güncelle. Sıra: `initial_access < discovery < lateral_movement < impact`.
+
+**L3 — Modbus MEI Yanlış Etiketleniyor**
+- **Dosya:** `sensor/internal/protocols/modbus/server.go`
+- **Sorun:** MEI (0x2B) isteği `MODBUS_UNKNOWN_FUNCTION` olarak loglanıyor. Shodan/Nmap taramaları gömülü kalıyor.
+- **Düzeltme:** `fcEncapsulatedTransport` case'ini `MODBUS_SCANNER_DETECTED` (severity: MEDIUM) olarak emit et.
 
 ---
 
-### A6 — Session Detail: MITRE description göster
-**Dosya:** `ui/app/(operator)/sessions/[id]/page.tsx` + `manager/api/sessions.py`
-**Sorun:** `mitre_ics.py`'de her technique için açıklama yazılmış ama API'den dönülmüyor, UI'da da gösterilmiyor.
-**Düzeltme:**
-- `sessions.py` → `_session_summary` içinde mitre_techniques listesine `description` alanını ekle
-- MITRE tab card'larına description paragrafı ekle
-**Test:** Session MITRE tab → technique card altında açıklama metni görünmeli.
+### FAZ M — Veri Zenginleştirme ⏳
 
----
+**M1 — GeoIP Org/ASN Alanı UI'da Göster**
+- Session detail'e "ASN/Org" card'ı ekle (`session.geo.org` varsa).
+- Sessions listesinde flag'e hover tooltip olarak göster.
 
-### A7 — Audit Log: Filtreleme paneli
-**Dosya:** `ui/app/(admin)/admin/audit/page.tsx`
-**Sorun:** 10.000 satırlık audit log'da belirli bir kullanıcının veya action türünün kaydını bulmak imkânsız. Filtre yok.
-**Düzeltme:** Sayfa başına filter panel ekle:
-- Username (text input)
-- Action (select — mevcut ACTION_COLORS key'lerinden)
-- Date range (from/to, sadece tarih — datetime-local değil)
-- Filtreler API query param'a bağlansın: `?username=&action=&from=&to=`
-**Test:** Filtrele → sadece ilgili kayıtlar dönsün.
+**M2 — Password IOC Extraction**
+- `manager/analyzer/ioc_extractor.py` — `artifact_type == "password"` → `type: "password"`, `confidence: 0.85` ile IOC oluştur.
 
----
-
-### A8 — Audit Log: Eksik ACTION_COLORS + CSV export
-**Dosya:** `ui/app/(admin)/admin/audit/page.tsx`
-**Sorun A:** `purge_audit_log` ve `update_audit_retention` action'ları renk map'inde yok, gri (badge-noise) gösteriyor.
-**Sorun B:** Session export var ama audit log export yok. Compliance için kritik.
-**Düzeltme A:** ACTION_COLORS'a iki yeni entry ekle.
-**Düzeltme B:** "Export CSV" butonu ekle → `GET /admin/audit/export/csv` endpoint'i + indirme.
-**Test:** Audit log aç → purge satırı renkli görünsün; Export CSV tıkla → dosya insin.
-
----
-
-## BLOK B — Session Triage Workflow
-
-### B1 — Session status alanı (backend)
-**Dosya:** `manager/db/models.py`
-**Sorun:** SOC analisti bir session'ı incelediğinde "incelendi", "false positive", "eskalasyon" gibi işaretleyemiyor.
-**Düzeltme:** `Session` modeline `triage_status` alanı ekle (new / investigating / reviewed / false_positive / escalated).
-`create_all` ile otomatik oluşacak.
-**Test:** `docker compose restart manager` → alan DB'de görünmeli.
-
----
-
-### B2 — Session status: API endpoint
-**Dosya:** `manager/api/sessions.py`
-**Düzeltme:** `PATCH /sessions/{id}/triage` endpoint'i ekle — sadece `triage_status` ve opsiyonel `triage_note` alanlarını günceller.
-Response olarak güncel session döner.
-**Test:** `curl -X PATCH .../sessions/{id}/triage -d '{"triage_status":"reviewed"}'` → 200 OK.
-
----
-
-### B3 — Session list: triage_status kolonu + filtresi
-**Dosya:** `ui/app/(operator)/sessions/page.tsx`
-**Düzeltme:**
-- Tablo kolonuna triage_status ekle (badge: new=mavi, reviewing=sarı, reviewed=yeşil, fp=gri, escalated=kırmızı)
-- Filter paneline "Status" dropdown ekle
-**Test:** Sessions listesinde yeni kolon görünsün, filtrelenebilsin.
-
----
-
-### B4 — Session detail: triage panel
-**Dosya:** `ui/app/(operator)/sessions/[id]/page.tsx`
-**Düzeltme:** Session header'ının altına küçük bir triage satırı ekle:
-- Status dropdown (new/investigating/reviewed/false_positive/escalated)
-- Note textarea (max 500 karakter)
-- Save butonu
-**Test:** Session aç → status değiştir → kaydet → listede yansısın.
-
----
-
-## BLOK C — Dashboard Güçlendirme
-
-### C1 — Dashboard: Eksik KPI'lar
-**Dosya:** `ui/app/(operator)/dashboard/page.tsx`
-**Sorun:** 4 KPI var. Eksik olanlar: active sensors, unique attacker IPs (24h), yeni sessions (24h).
-**Düzeltme:**
-- `GET /health` zaten sensor count'u veriyor → "Active Sensors" KPI
-- `GET /events/top-attackers` zaten unique IP döndürüyor → count'u KPI olarak göster
-- Sessions API'ye `?from_dt=<24h_önce>` ile çekip count al → "Sessions Today" KPI
-**Test:** Dashboard'da 6-7 KPI görünsün.
-
----
-
-### C2 — Dashboard: Protokol dağılımı grafiği
-**Dosya:** `ui/app/(operator)/dashboard/page.tsx` + `manager/api/sessions.py`
-**Sorun:** S7 / Modbus / HTTP dağılımı hiç görünmüyor.
-**Düzeltme:**
-- `GET /sessions/stats` endpoint'i ekle → protocol başına session count döner
-- Dashboard'a pie veya bar chart ekle (recharts zaten mevcut)
-**Test:** Dashboard'da protokol dağılımı grafiği görünsün.
-
----
-
-### C3 — Dashboard: Zaman serisi histogram (events 24h)
-**Dosya:** `ui/app/(operator)/dashboard/page.tsx` + `manager/api/events.py`
-**Sorun:** Olayların zamansal dağılımı yok. "Saldırı dalgası saat 03:00'te geldi" görülemiyor.
-**Düzeltme:**
-- `GET /events/histogram?hours=24&bucket=1h` endpoint'i ekle → saat başı event count dizisi döner
-- Dashboard'a BarChart ekle
-**Test:** Dashboard'da 24 saatlik bar chart görünsün.
-
----
-
-### C4 — Dashboard: Live feed tıklanabilir satır
-**Dosya:** `ui/app/(operator)/dashboard/page.tsx`
-**Sorun:** Live feed'deki event satırlarına tıklanınca ilgili session'a gitmiyor.
-**Düzeltme:** Her event satırına `onClick={() => router.push('/sessions/' + ev.session_id)}` ekle.
-**Test:** Live feed'de event satırına tıkla → session detail açılsın.
-
----
-
-## BLOK D — Sensor Geliştirmeleri
-
-### D1 — Sensor rename
-**Dosya:** `manager/api/sensors.py` + `ui/app/(operator)/sensors/page.tsx`
-**Sorun:** Sensor oluşturulunca adı değiştirilemiyor. Sadece delete var.
-**Düzeltme:**
-- `PATCH /sensors/{id}` endpoint'i ekle (sadece `name` güncellesin)
-- Sensors tablosuna inline edit: isim hücresine tıkla → input → enter ile kaydet
-**Test:** Sensör adını değiştir → listede güncellensin.
-
----
-
-### D2 — Sensor detail: bağlı sessionlar
-**Dosya:** `manager/api/sensors.py` + `ui/app/(operator)/sensors/page.tsx`
-**Sorun:** Sensöre tıklanınca o sensörden gelen sessionlar görülemiyor.
-**Düzeltme:**
-- `GET /sensors/{id}/sessions` endpoint'i ekle (sessions tablosunu sensor_id ile filtrele)
-- Sensör satırına "expand" butonu ekle → altında mini session listesi açılsın
-**Test:** Sensör genişlet → o sensörden gelen sessionlar listelensin.
-
----
-
-## BLOK E — Integrations Genişletme
-
-### E1 — Syslog/CEF çıktısı
-**Dosya:** `manager/notifications/siem_forwarder.py`
-**Sorun:** Sadece Splunk HEC var. OT ortamlarında Syslog → SIEM pipeline çok yaygın.
-**Düzeltme:** `siem_type = "syslog_cef"` seçeneği ekle → UDP/TCP syslog socket ile CEF format event gönder.
-Admin SIEM sayfasında type seçimine "Syslog (CEF)" opsiyonu ekle.
-**Test:** siem_type=syslog_cef ile local syslog'a test gönder → CEF format doğru gelsin.
-
----
-
-### E2 — Generic Webhook
-**Dosya:** `manager/notifications/siem_forwarder.py` + SIEM config
-**Sorun:** Teams, Slack, PagerDuty, OpsGenie entegrasyonu için Generic Webhook yok.
-**Düzeltme:** `siem_type = "webhook"` seçeneği ekle → JSON POST olarak event gönder.
-Opsiyonel custom headers desteği (Authorization: Bearer xxx gibi).
-**Test:** Webhook URL'e POST gönder → payload doğru JSON gelsin.
-
----
-
-### E3 — Alert throttle/dedup
-**Dosya:** `manager/notifications/smtp_sender.py`
-**Sorun:** Aynı IP 500 event üretirse 500 email gidiyor. Rate limiting yok.
-**Düzeltme:** Redis'te `alert.throttle:{source_ip}:{severity}` key'i kullan → 15 dakikada aynı IP+severity kombinasyonu için max 1 email.
-**Test:** 10 event gönder → sadece 1 email gitsin.
-
----
-
-## BLOK F — Küçük UX Dokunuşları
-
-### F1 — Sessions: Kolon sort
-**Dosya:** `ui/app/(operator)/sessions/page.tsx`
-**Sorun:** Severity, event count, started_at kolonlarına tıklayarak sort edilemiyor.
-**Düzeltme:** Tablo başlıklarına sort toggle ekle → API'ye `?sort_by=severity&sort_dir=desc` parametresi gönder.
-Backend `list_filtered` metoduna sort desteği ekle.
-**Test:** "Events" kolonuna tıkla → event sayısına göre sırala.
-
----
-
-### F2 — Sessions: JSON + STIX export
-**Dosya:** `manager/api/sessions.py` + `ui/app/(operator)/sessions/page.tsx`
-**Sorun:** Sadece CSV export var.
-**Düzeltme:**
-- `GET /sessions/export/json` endpoint'i ekle
-- IOC'ları içeren basit STIX 2.1 bundle export: `GET /sessions/{id}/export/stix`
-- Sessions sayfasındaki export butonuna dropdown ekle (CSV / JSON / STIX)
-**Test:** JSON export → valid JSON insin. STIX export → STIX bundle formatında insin.
-
----
-
-### F3 — In-app notification bell
-**Dosya:** `ui/app/(operator)/layout.tsx` (veya layout bileşeni)
-**Sorun:** SMTP email gidiyor ama uygulama içinde bildirim yok. Başka sekmede çalışan analist uyarı almıyor.
-**Düzeltme:** SSE stream'den gelen `attack_event` mesajlarında severity critical/high ise:
-- Sağ üst köşede bir notification bell sayacı arttır
-- Tıklanınca son 5 critical/high session listesi açılsın
-**Test:** Critical event üret → bell'de sayaç görünsün.
+**M3 — IOC Sayfasında Value Bazlı Session Filtreleme**
+- Session count butonunu tıklanınca IP tipi IOC'ta `/sessions?source_ip={value}` yönlendir.
 
 ---
 
 ## Uygulama Sırası
 
 ```
-A1 → A2 → A3 → A4 → A5 → A6 → A7 → A8
-B1 → B2 → B3 → B4
-C1 → C2 → C3 → C4
-D1 → D2
-E1 → E2 → E3
-F1 → F2 → F3
+✅  A → B → C → D → E → F → G → H → I → J → K
+✅  N → O → P → Q → R1
+
+⏳  R2  Rapor görüntüleme UX (in-page modal)
+⏳  R3  Rapor dark theme tasarımı
+⏳  L   Bug düzeltmeleri (sensör)
+⏳  M   Veri zenginleştirme
 ```
 
-Her adım için:
-1. Değişikliği yap
-2. Docker rebuild gerekiyorsa: `docker compose build <servis> && docker compose up -d <servis>`
-3. Kullanıcı manuel test eder
-4. "devam et" komutu alındığında bir sonraki adıma geç
-
----
-
-## Tamamlanan Adımlar
-
-- [x] A1
-- [x] A2
-- [x] A2b
-- [x] A3
-- [x] A4
-- [x] A5
-- [x] A6
-- [x] A7
-- [x] A8
-- [x] B1
-- [x] B2
-- [x] B3
-- [x] B4
-- [x] C1
-- [x] C2
-- [x] C3
-- [x] C4
-- [x] D1
-- [x] D2
-- [x] E1
-- [x] E2
-- [x] E3
-- [x] F1
-- [x] F2
-- [x] F3
+Her faz öncesi **bekle** — "devam et" komutu alınınca uygula.

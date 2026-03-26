@@ -18,7 +18,7 @@ logger = logging.getLogger("otrap.smtp")
 SEVERITY_ORDER = {"noise": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
-async def maybe_send_smtp(db, ev: dict, session: models.Session) -> None:
+async def maybe_send_smtp(db, ev: dict, session: models.Session, *, force: bool = False) -> None:
     cfg = await models.SMTPConfig.get(db)
     if not cfg or not cfg.enabled or not cfg.host:
         return
@@ -26,30 +26,58 @@ async def maybe_send_smtp(db, ev: dict, session: models.Session) -> None:
     severity = ev.get("severity", "SEVERITY_NOISE").replace("SEVERITY_", "").lower()
     min_sev   = cfg.min_severity.lower()
 
-    # CPU STOP always bypasses min_severity filter
+    # CPU STOP always bypasses min_severity filter; force=True (rule-triggered) also bypasses
     is_cpu_stop = ev.get("event_type") == "S7_CPU_STOP"
-    if not is_cpu_stop and SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(min_sev, 0):
+    if not is_cpu_stop and not force and SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER.get(min_sev, 0):
         return
 
-    # Cooldown check (Redis key per source_ip+severity — CPU STOP always bypasses)
-    try:
-        import redis.asyncio as aioredis, os
-        r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
-        cooldown_key = f"smtp.cooldown:{session.source_ip}:{severity}"
-        if await r.exists(cooldown_key) and not is_cpu_stop:
+    # Cooldown check — skipped when force=True (rule-triggered) or CPU STOP
+    if not force and not is_cpu_stop:
+        try:
+            import redis.asyncio as aioredis, os
+            r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+            cooldown_key = f"smtp.cooldown:{session.source_ip}:{severity}"
+            if await r.exists(cooldown_key):
+                await r.aclose()
+                db.add(models.SMTPDeliveryLog(
+                    session_id=session.id,
+                    recipient=", ".join(cfg.to_addresses),
+                    subject=f"[OTrap] {severity.upper()} from {session.source_ip}",
+                    status="skipped",
+                    error_detail="Cooldown active",
+                ))
+                await db.commit()
+                return
+            await r.setex(cooldown_key, cfg.cooldown_seconds, "1")
             await r.aclose()
-            return
-        await r.setex(cooldown_key, cfg.cooldown_seconds, "1")
-        await r.aclose()
-    except Exception as e:
-        logger.warning("Cooldown check failed", extra={"error": str(e)})
+        except Exception as e:
+            logger.warning("Cooldown check failed", extra={"error": str(e)})
 
     # Build and send email
+    subject = (
+        f"[OTrap] {'CPU STOP EXPLOIT' if is_cpu_stop else severity.upper() + ' Alert'}: "
+        f"{ev.get('event_type', 'UNKNOWN')} from {ev.get('source_ip', 'unknown')}"
+    )
     try:
         password = decrypt_secret(cfg.password_enc) if cfg.password_enc else None
         _send_alert_email(cfg, password, ev, session)
+        db.add(models.SMTPDeliveryLog(
+            session_id=session.id,
+            recipient=", ".join(cfg.to_addresses),
+            subject=subject,
+            status="success",
+        ))
+        await db.commit()
     except Exception as e:
         logger.error("SMTP send failed", exc_info=True)
+        db.add(models.SMTPDeliveryLog(
+            session_id=session.id,
+            recipient=", ".join(cfg.to_addresses),
+            subject=subject,
+            status="failed",
+            error_detail=str(e)[:500],
+        ))
+        await db.commit()
 
 
 def send_reset_email(cfg: "models.SMTPConfig", user: "models.User", token: str) -> None:

@@ -1,16 +1,63 @@
-// middleware.ts — Server-side route protection
+// middleware.ts — Route protection + per-request CSP nonce
 import { NextRequest, NextResponse } from "next/server";
 import { INTERNAL_API_BASE } from "@/lib/internal-api";
 
 const PUBLIC_PATHS = ["/login"];
 const ADMIN_PATHS  = ["/admin"];
 
+// ─── Nonce helpers ────────────────────────────────────────────────────────────
+
+function generateNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  // btoa works in Edge Runtime; avoid Buffer which is Node-only
+  return btoa(String.fromCharCode(...bytes));
+}
+
+const _publicApiOrigin = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_API_URL ?? "").origin;
+  } catch {
+    return null;
+  }
+})();
+
+function buildCSP(nonce: string): string {
+  const connectSrc = ["'self'", "ws:", "wss:"];
+  if (_publicApiOrigin && !connectSrc.includes(_publicApiOrigin)) {
+    connectSrc.push(_publicApiOrigin);
+  }
+
+  const isDev = process.env.NODE_ENV === "development";
+
+  return [
+    "default-src 'self'",
+    // In dev, keep unsafe-eval so Next.js fast-refresh works
+    isDev
+      ? `script-src 'self' 'nonce-${nonce}' 'unsafe-eval'`
+      : `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
+    "font-src 'self' fonts.gstatic.com",
+    `connect-src ${connectSrc.join(" ")}`,
+    "img-src 'self' data:",
+  ].join("; ");
+}
+
+// ─── Middleware ───────────────────────────────────────────────────────────────
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const nonce = generateNonce();
 
-  // Allow public paths
+  // Build request headers that carry the nonce forward to server components
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+
+  // Allow public paths — still apply CSP
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
-    return NextResponse.next();
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.headers.set("Content-Security-Policy", buildCSP(nonce));
+    return response;
   }
 
   // Check session cookie
@@ -38,7 +85,9 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  return NextResponse.next();
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("Content-Security-Policy", buildCSP(nonce));
+  return response;
 }
 
 export const config = {

@@ -2,7 +2,9 @@
 package hmi
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -336,9 +338,18 @@ func (c *OWASPClassifier) Classify(r *http.Request) *Classification {
 	path    := strings.ToLower(r.URL.Path)
 	query   := strings.ToLower(r.URL.RawQuery)
 	ua      := strings.ToLower(r.Header.Get("User-Agent"))
-	body    := ""
+	body := ""
 	if r.Body != nil {
-		// Only read a sample for classification (protocol servers must not block)
+		bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if err == nil && len(bodyBytes) > 0 {
+			body = strings.ToLower(string(bodyBytes))
+			// Restore so downstream handlers (e.g. ParseForm) can still read it
+			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+	}
+	rawPayload := query
+	if rawPayload == "" {
+		rawPayload = body
 	}
 	combined := path + " " + query + " " + body
 
@@ -361,7 +372,7 @@ func (c *OWASPClassifier) Classify(r *http.Request) *Classification {
 				Type:    ClassSQLi,
 				Label:   "sqli_probe",
 				Detail:  fmt.Sprintf("SQL injection pattern detected: '%s'", pattern),
-				Payload: query,
+				Payload: rawPayload,
 			}
 		}
 	}
@@ -373,7 +384,7 @@ func (c *OWASPClassifier) Classify(r *http.Request) *Classification {
 				Type:    ClassXSS,
 				Label:   "xss_probe",
 				Detail:  fmt.Sprintf("XSS pattern detected: '%s'", pattern),
-				Payload: query,
+				Payload: rawPayload,
 			}
 		}
 	}
@@ -385,7 +396,7 @@ func (c *OWASPClassifier) Classify(r *http.Request) *Classification {
 				Type:    ClassCmdInj,
 				Label:   "command_injection",
 				Detail:  fmt.Sprintf("Command injection pattern: '%s'", pattern),
-				Payload: query,
+				Payload: rawPayload,
 			}
 		}
 	}
