@@ -372,7 +372,7 @@ export default function SessionsPage() {
                   <td className="font-mono text-xs">
                     <span className="flex items-center gap-1.5">
                       {s.geo?.flag
-                        ? <span title={s.geo.country_name}>{s.geo.flag}</span>
+                        ? <span title={[s.geo.country_name, s.geo.org].filter(Boolean).join(" · ")}>{s.geo.flag}</span>
                         : isPrivateIp(s.source_ip)
                           ? <span title="Private / internal network address" className="text-[10px] font-semibold px-1 py-0.5 rounded bg-bg-elevated text-text-faint border border-bg-border leading-none">INT</span>
                           : null

@@ -91,11 +91,11 @@ Her faz tamamlandığında **bekle**, kullanıcı **"devam et"** deyince bir son
 
 ---
 
-## BEKLEYEN FAZLAR
+## TAMAMLANAN FAZLAR (devam)
 
 ---
 
-### FAZ R2 — Rapor Görüntüleme UX ⏳
+### FAZ R2 — Rapor Görüntüleme UX ✅
 
 **Sorun:** "View / Print" butonu yeni sekme açıyor. Kullanıcı raporu görür, Close'a basar → sekme kapanır. Bu akış mantıksız ve kullanışsız.
 
@@ -112,7 +112,7 @@ Her faz tamamlandığında **bekle**, kullanıcı **"devam et"** deyince bir son
 
 ---
 
-### FAZ R3 — Rapor Dark Theme Tasarımı ⏳
+### FAZ R3 — Rapor Dark Theme Tasarımı ✅
 
 **Sorun:** Mevcut rapor beyaz/kurumsal görünümlü. Uygulama koyu tema kullanıyor; rapor bununla uyumsuz.
 
@@ -153,7 +153,7 @@ Action bar'a bilgi notu eklenir: _"Enable Background graphics in print dialog fo
 
 ---
 
-### FAZ L — Bug Düzeltmeleri (Sensör Doğruluğu) ⏳
+### FAZ L — Bug Düzeltmeleri (Sensör Doğruluğu) ✅
 
 **L1 — HMI POST Body Parse Hatası**
 - **Dosya:** `sensor/internal/protocols/hmi/server.go`
@@ -172,7 +172,7 @@ Action bar'a bilgi notu eklenir: _"Enable Background graphics in print dialog fo
 
 ---
 
-### FAZ M — Veri Zenginleştirme ⏳
+### FAZ M — Veri Zenginleştirme ✅
 
 **M1 — GeoIP Org/ASN Alanı UI'da Göster**
 - Session detail'e "ASN/Org" card'ı ekle (`session.geo.org` varsa).
@@ -192,10 +192,10 @@ Action bar'a bilgi notu eklenir: _"Enable Background graphics in print dialog fo
 ✅  A → B → C → D → E → F → G → H → I → J → K
 ✅  N → O → P → Q → R1
 
-⏳  R2  Rapor görüntüleme UX (in-page modal)
-⏳  R3  Rapor dark theme tasarımı
-⏳  L   Bug düzeltmeleri (sensör)
-⏳  M   Veri zenginleştirme
+✅  R2  Rapor görüntüleme UX (in-page modal)
+✅  R3  Rapor dark theme tasarımı + @react-pdf/renderer PDF indirme
+✅  L   Bug düzeltmeleri (sensör) — önceki commit'lerde tamamlandı
+✅  M   Veri zenginleştirme
 ```
 
 Her faz öncesi **bekle** — "devam et" komutu alınınca uygula.
