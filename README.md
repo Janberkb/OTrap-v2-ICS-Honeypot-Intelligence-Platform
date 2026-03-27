@@ -101,7 +101,20 @@ cp .env.example .env
 ./scripts/install_manager.sh
 ```
 
-The installer generates all secrets, starts all services, and prints the admin credentials. Open `http://localhost:3000` to access the console.
+The installer generates all secrets, starts the management stack (`postgres`, `redis`, `manager`, `ui`), and prints the admin credentials. Open `http://localhost:3000` to access the console, then add your first sensor from the UI.
+
+### First Login (Recommended)
+
+After the first login as `admin` / your generated password:
+
+1. Open **Sensors → Add Sensor**.
+2. Enter a sensor name such as `ot-segment-a`.
+3. Click **Generate**.
+4. Choose one of the generated onboarding options:
+   - **Install Command** — clones the repo on the target host, builds the sensor image locally, and starts the container.
+   - **Docker run** — for pre-built image workflows.
+   - **`.env.sensor` + Compose** — for `docker-compose.sensor.yml` deployments.
+5. Run the copied command on the target host and wait for the sensor to appear as **active** on the Sensors page.
 
 ---
 
@@ -118,7 +131,7 @@ The installer generates all secrets, starts all services, and prints the admin c
 
 **Ports that must be free on the management server:** `3000` (UI), `8080` (API), `9443` (gRPC)
 
-**Ports that must be free on the sensor host:** `102` (S7comm), `502` (Modbus), `80` (HMI HTTP), `443` (HMI HTTPS)
+**Ports that must be free on the sensor host:** `102` (S7comm), `502` (Modbus), `80` (HMI HTTP), `443` (HMI HTTPS), and `44818` if you plan to expose EtherNet/IP externally
 
 ---
 
@@ -180,17 +193,20 @@ Docker Desktop includes both the engine and the Compose plugin. After installati
 
 ---
 
-### Scenario A — Single Host (Local / Lab)
+### Recommended Installation Flow
 
-All services — manager, database, cache, UI, and a local sensor — run on one machine.
+This single flow covers both of these deployments:
+
+- Manager + sensor on the same machine
+- One manager with one or many remote sensor hosts
+
+Use `./scripts/install_manager.sh` as the canonical install command. `make install-manager` only wraps the same script, so the README uses the script directly and avoids requiring `make`.
 
 **Step 1 — Clone the repository**
 
 ```bash
 git clone https://github.com/Janberkb/OTrap-v2-ICS-Honeypot-Intelligence-Platform.git otrap
 cd otrap
-make install-manager
-OR continue to step 2
 ```
 
 **Step 2 — Configure environment**
@@ -199,7 +215,7 @@ OR continue to step 2
 cp .env.example .env
 ```
 
-Open `.env`. For a quick local start you can leave all `CHANGE_ME` values as-is — the installer auto-generates strong secrets. If you want to set your own admin password:
+Open `.env`. For a quick start you can leave all `CHANGE_ME` values as-is because the installer auto-generates strong secrets. If you want to set your own admin password:
 
 ```dotenv
 INITIAL_ADMIN_PASSWORD=YourStrongPasswordHere
@@ -229,154 +245,86 @@ At the end you will see:
   Admin password: <generated>
 ```
 
-**Step 4 — Open the UI**
+**Step 4 — If sensors will run on other hosts, set a reachable manager address**
 
-Navigate to `http://localhost:3000` and log in.
+If you will run sensors on the same machine as the manager, you can skip this step.
 
-**Step 5 — Add a local sensor (optional)**
-
-```bash
-# Generate a join token
-ADMIN_PASS=<your-admin-password> SENSOR_NAME=local-sensor make sensor-token
-
-# Add the printed token to .env:
-#   SENSOR_JOIN_TOKEN=<token>
-#   SENSOR_INSECURE_JOIN=true   (already set)
-
-# Start the sensor
-docker compose up -d sensor
-```
-
-The sensor appears as **active** on the Sensors page within seconds.
-
----
-
-### Scenario B — Multi-Host (Production)
-
-The manager runs on a dedicated management server; one or more sensors run on machines inside OT network segments.
-
-**B1 — Install the manager** (follow Scenario A Steps 1–4, skip sensor)
-
-**B2 — Configure the manager for remote sensors**
-
-The manager's gRPC port must be reachable from sensor hosts. Edit `.env` on the management server:
+If sensors will run on other hosts, edit `.env` on the management server:
 
 ```dotenv
-GRPC_HOST=192.168.1.10                   # Management server IP, reachable from sensor hosts
+GRPC_HOST=192.168.1.10
 SENSOR_PUBLIC_MANAGER_ADDR=192.168.1.10:9443
 ```
 
-Restart the manager to rebind:
+Then restart the manager:
 
 ```bash
 docker compose up -d manager
 ```
 
-**B3 — Build and push the sensor image**
+`SENSOR_PUBLIC_MANAGER_ADDR` must point to an address that sensor hosts can actually reach. The UI warns you if it is still set to loopback or a wildcard bind address.
 
-The sensor image is not published to a public registry. Build it yourself and push to any registry your sensor hosts can pull from:
+**Step 5 — Log into the UI and create sensors**
+
+1. Open `http://localhost:3000` and log in as the superadmin.
+2. Go to **Sensors → Add Sensor**.
+3. Enter a sensor name such as `local-sensor`, `ot-segment-a`, or `ot-segment-b`.
+4. Click **Generate**.
+5. Copy one of the generated onboarding commands and run it in a terminal on the target host.
+
+The UI generates:
+
+- **Install Command** — recommended for most deployments; clones the repo on the target host, builds the sensor image locally, and starts the container
+- **Docker run** — optional advanced path for pre-built image workflows
+- **`.env.sensor` + Compose** — optional advanced path using `docker-compose.sensor.yml`
+
+This is the recommended sensor onboarding flow for both a single local sensor and multiple remote sensors. Repeat the same UI flow for every additional host.
+
+**Step 6 — Verify the sensor**
+
+The sensor should appear as **active** on the Sensors page within seconds. On the target host you can also check:
+
+```bash
+docker logs <sensor-container-name>
+```
+
+Expected output includes a successful join message.
+
+**Optional — Pre-built image workflow for many hosts**
+
+If you do not want each target host to clone the repo and build locally, build and push the sensor image once:
 
 ```bash
 # Single-arch (amd64)
 docker build -t your-registry/otrap-sensor:latest ./sensor
 docker push your-registry/otrap-sensor:latest
 
-# Multi-arch (amd64 + arm64 for ARM industrial hardware)
+# Multi-arch (amd64 + arm64)
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -t your-registry/otrap-sensor:latest \
   --push ./sensor
 ```
 
-Update `.env`:
+Update `.env` on the manager:
 
 ```dotenv
 SENSOR_IMAGE_REF=your-registry/otrap-sensor:latest
 ```
 
-**B4 — Generate an onboarding command**
-
-1. Log into the management UI → **Sensors → Add Sensor**
-2. Enter a sensor name (e.g. `ot-segment-a`)
-3. Click **Generate**
-
-The UI displays a ready-to-run `docker run` command and a single-use join token (valid for 24 h by default).
-
-Alternatively, from the management server CLI:
+Restart the manager so newly generated onboarding commands use the updated image:
 
 ```bash
-ADMIN_PASS=<admin-password> SENSOR_NAME=ot-segment-a make sensor-token
+docker compose up -d manager
 ```
 
-**B5 — Deploy the sensor**
-
-Copy and run the generated command on the sensor host (Docker must be installed):
-
-```bash
-docker run -d \
-  --name otrap-sensor-ot-segment-a \
-  --restart unless-stopped \
-  -p 102:102 -p 502:502 -p 80:80 -p 443:443 \
-  -v /var/lib/otrap/sensor/certs:/etc/otrap/sensor/certs \
-  -e SENSOR_MANAGER_URL=192.168.1.10:9443 \
-  -e SENSOR_JOIN_TOKEN=<token> \
-  -e SENSOR_NAME=ot-segment-a \
-  -e SENSOR_CERT_ENC_KEY=<64-char-hex> \
-  -e SENSOR_INSECURE_JOIN=true \
-  -e LOG_LEVEL=info \
-  your-registry/otrap-sensor:latest
-```
+Then return to **Sensors → Add Sensor**, generate a new onboarding payload, and use the generated **Docker run** or **`.env.sensor` + Compose** output on each target host.
 
 > `SENSOR_INSECURE_JOIN=true` skips TLS verification for the initial join only. After a successful join the sensor stores a signed mTLS certificate; all subsequent connections are fully verified.
 
-Check that the sensor joined:
+> The generated `docker run` flow publishes `102/502/80/443` by default. If you also want the EtherNet/IP decoy reachable from outside the container, add `-p 44818:44818`.
 
-```bash
-docker logs otrap-sensor-ot-segment-a
-# Expected: {"level":"INFO","msg":"Join successful","sensor_id":"..."}
-```
-
-**Advanced: Docker Compose on sensor host**
-
-If you prefer Compose over a bare `docker run`:
-
-```bash
-# Copy docker-compose.sensor.yml to the sensor host, then:
-cat > .env.sensor << 'EOF'
-SENSOR_MANAGER_URL=192.168.1.10:9443
-SENSOR_JOIN_TOKEN=<token>
-SENSOR_NAME=ot-segment-a
-SENSOR_CERT_ENC_KEY=<64-char-hex>
-SENSOR_INSECURE_JOIN=true
-SENSOR_IMAGE_REF=your-registry/otrap-sensor:latest
-LOG_LEVEL=info
-EOF
-
-docker compose -f docker-compose.sensor.yml --env-file .env.sensor up -d
-```
-
-`docker-compose.sensor.yml` uses `network_mode: host` so the sensor binds directly to the host's physical interfaces — correct for dedicated Linux industrial hardware.
-
----
-
-### Scenario C — Development Mode
-
-Starts the manager with hot-reload, enables FastAPI `/docs`, and exposes Postgres and Redis ports for local tooling:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-```
-
-To run the UI natively for faster iteration:
-
-```bash
-cd ui
-npm install
-INTERNAL_API_BASE=http://localhost:8080 npm run dev
-# Open http://localhost:3000
-```
-
-FastAPI interactive docs: `http://localhost:8080/docs`
+> `docker-compose.sensor.yml` uses `network_mode: host`, so all sensor listeners, including EtherNet/IP on `44818`, bind directly on the host.
 
 ---
 
@@ -410,7 +358,8 @@ All configuration is managed via environment variables in `.env`. The installer 
 | `GRPC_CA_CERT_B64` | Base64-encoded CA certificate. Auto-generated. |
 | `JOIN_TOKEN_TTL_HOURS` | Join token validity period. Default: `24` |
 | `SENSOR_PUBLIC_MANAGER_ADDR` | `host:port` embedded in generated sensor commands. |
-| `SENSOR_IMAGE_REF` | Docker image for remote sensors. Build and push your own. |
+| `INSTALLER_BASE_URL_OVERRIDE` | Optional HTTP base URL used in generated `curl | bash` installer commands. |
+| `SENSOR_IMAGE_REF` | Docker image used in pre-built-image onboarding commands. The default `ghcr.io/otrap/sensor:latest` is a placeholder; build and push your own image first. |
 | `SENSOR_CERT_ENC_KEY` | 64-char hex for encrypting sensor certs at rest. Auto-generated. |
 | `SENSOR_INSECURE_JOIN` | `true` for initial join. Set `false` after all sensors have joined. |
 
@@ -567,6 +516,8 @@ LM_STUDIO_BASE_URL=http://192.168.1.10:1234
 | **HMI HTTP** | TCP/80 | Login portal, session cookies, OWASP probe detection, path traversal logging |
 | **HMI HTTPS** | TCP/443 | Same as HTTP with auto-generated self-signed TLS certificate |
 
+> Note: the sensor process listens on TCP/44818 for EtherNet/IP by default, but the generated `docker run` examples publish only `102/502/80/443`. Add `-p 44818:44818` if you need EtherNet/IP reachable from outside the container, or use `docker-compose.sensor.yml` with host networking.
+
 ---
 
 ## 🔒 Security Hardening
@@ -622,29 +573,33 @@ All administrative actions are recorded and viewable at **Admin → Audit**:
 
 ## 🔔 Alert Rules
 
-Alert rules define conditions under which email notifications are sent. Configure at **Admin → Alert Rules**.
+Alert rules define condition-based automation for SMTP, SIEM, and session triage. Configure them at **Admin → Alert Rules**.
 
 Each rule specifies:
 - **Name** — a human-readable label for the rule
-- **Event types** — one or more honeypot event types that trigger the rule (e.g. `S7_CPU_STOP`, `HMI_LOGIN_SUCCESS`, `MODBUS_WRITE_MULTIPLE`)
-- **Minimum severity** — filter by severity level (low / medium / high / critical)
+- **Optional description** — operator-facing context for the rule
+- **Conditions** — zero or more ANDed predicates across `severity`, `protocol`, `event_type`, `source_ip`, and `sensor_id`
+- **Operators** — `eq`, `neq`, `gte`, `lte`, `in`, `not_in`, `contains`
+- **Actions** — force SMTP notification, force SIEM forwarding, and/or auto-triage matching sessions
+- **Threshold + window** — optional correlation logic such as "fire after 3 matches in 60 seconds"
 - **Enabled** toggle — pause a rule without deleting it
 
-Rules are evaluated by the analyzer worker immediately after each event is processed. Email delivery uses the SMTP settings configured in **Admin → Notifications**. A per-rule cooldown suppresses duplicate alerts for the same source IP within the configured window.
+Rules are evaluated by the analyzer worker immediately after each event is processed. Rules with no conditions act as catch-all rules. SMTP delivery still uses the global settings in **Admin → Notifications**, and SIEM forwarding still uses **Admin → SIEM Integration**.
 
 ---
 
 ## 📊 Reports
 
 PDF reports are generated on-demand at **Reports → Generate**. Each report includes:
-- Executive summary: total sessions, unique attackers, top protocols, date range
-- Attacker table with GeoIP, ASN, and session counts
-- Top IOCs by frequency and confidence score
-- MITRE ATT&CK for ICS technique matrix heatmap
-- Per-sensor event breakdown
-- Full session log with timestamps, severities, and kill chain phases
+- Executive summary: sessions, attackers, events, CPU STOP count, actionable sessions, and risk summary
+- Severity distribution, protocol breakdown, event histogram, top findings, and recommendations
+- Top attacker summary with GeoIP context and session counts
+- Session inventory with severity, triage, IOC counts, duration, and timestamps
+- IOC table with confidence scores and cross-session counts
+- MITRE ATT&CK for ICS observed techniques
+- Geographic distribution snapshot
 
-Generated reports are saved server-side and listed in the report history. Reports can be re-downloaded at any time.
+Generated reports are saved server-side, listed in report history, and can be viewed, downloaded as PDF, or deleted later from the UI.
 
 ---
 
@@ -681,7 +636,7 @@ BACKUP_FILE=backups/otrap_2024-01-15_02-00.sql ./scripts/restore.sh
 
 The restore script stops the manager, applies the dump, and restarts automatically.
 
-Backups can also be triggered and downloaded from **Admin → Backup** in the management console.
+Backups can also be created, downloaded, deleted, and restored from **Admin → Backup** in the management console. The same screen also supports uploading a `.sql.gz` file and restoring from it.
 
 ---
 
