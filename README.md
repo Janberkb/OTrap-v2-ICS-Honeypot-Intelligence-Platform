@@ -16,12 +16,12 @@ OTrap is a distributed ICS/OT honeypot platform that deploys stateful protocol e
 
 **Honeypot Protocols**
 - **Siemens S7comm** — stateful PLC emulation with persistent memory map (CPU STOP, DB read/write, system status)
-- **Modbus/TCP** — 8 function codes (read/write coils, holding registers, input registers)
-- **EtherNet/IP** — CIP identity and list services
+- **Modbus/TCP** — common read/write function codes plus MEI device identification responses
+- **EtherNet/IP** — encapsulation commands, CIP identity, and explicit messaging probes
 - **HMI HTTP/HTTPS** — realistic login portal with OWASP probe detection and brute-force logging
 
 **Detection & Intelligence**
-- MITRE ATT&CK for ICS tactic/technique mapping per session (26 unique techniques across 11 tactics)
+- MITRE ATT&CK for ICS tactic/technique mapping per session
 - IOC extraction: source IPs, usernames, passwords, S7/EtherNet/IP payloads, SQL injection payloads, path traversal probes, URL paths, HTTP User-Agent strings, Modbus function codes and write values, C2 domains
 - GeoIP enrichment with country, city, and ASN/ISP data (offline, MaxMind GeoLite2)
 - Threat intelligence integration (GreyNoise, AbuseIPDB)
@@ -81,11 +81,12 @@ OTrap Sensor (Go)   ──gRPC/mTLS──▶  OTrap Manager (FastAPI)
   :44818 EtherNet/IP                 PostgreSQL 16    (sessions, IOCs, audit)
   :80    HMI HTTP                    Redis 7          (pub/sub, caching, health)
   :443   HMI HTTPS                   Next.js UI :3000 (SOC console)
-                                     LLM Engine :8001 (optional, Ollama)
+                                     Optional local LLM backend
+                                       (Ollama / LM Studio over HTTP)
 ```
 
 **Key design decisions:**
-- Sensors initiate all connections outbound — no inbound firewall rules needed on the sensor host
+- Sensors initiate all management-plane connections outbound; only the OT-facing protocol ports need inbound reachability
 - Per-sensor mTLS certificates issued at join time; CA private key never leaves the manager
 - Stateful S7 memory map: attacker writes are readable back, producing convincing PLC behavior
 - CPU STOP returns a plausible ACK (never RST) to preserve the deception
@@ -101,20 +102,7 @@ cp .env.example .env
 ./scripts/install_manager.sh
 ```
 
-The installer generates all secrets, starts the management stack (`postgres`, `redis`, `manager`, `ui`), and prints the admin credentials. Open `http://localhost:3000` to access the console, then add your first sensor from the UI.
-
-### First Login (Recommended)
-
-After the first login as `admin` / your generated password:
-
-1. Open **Sensors → Add Sensor**.
-2. Enter a sensor name such as `ot-segment-a`.
-3. Click **Generate**.
-4. Choose one of the generated onboarding options:
-   - **Install Command** — clones the repo on the target host, builds the sensor image locally, and starts the container.
-   - **Docker run** — for pre-built image workflows.
-   - **`.env.sensor` + Compose** — for `docker-compose.sensor.yml` deployments.
-5. Run the copied command on the target host and wait for the sensor to appear as **active** on the Sensors page.
+The installer generates all secrets, starts the management stack (`postgres`, `redis`, `manager`, `ui`), and prints the admin credentials. Open the management UI (`http://localhost:3000` on a local install), then create sensors from **Sensors → Add Sensor**. The detailed flow below covers same-host installs, remote sensor hosts, and optional private-registry deployments.
 
 ---
 
@@ -127,7 +115,7 @@ After the first login as `admin` / your generated password:
 | Docker Engine | 24+ | `docker --version` |
 | Docker Compose | v2 | `docker compose version` (note: no dash) |
 | Git | Any | For cloning |
-| Python 3 | 3.8+ | Used by the installer script only |
+| Python 3 | 3.8+ | Used by the manager installer and helper scripts |
 
 **Ports that must be free on the management server:** `3000` (UI), `8080` (API), `9443` (gRPC)
 
@@ -195,7 +183,9 @@ Docker Desktop includes both the engine and the Compose plugin. After installati
 
 ### Recommended Installation Flow
 
-This single flow covers both of these deployments:
+This expands the Quick Start above. If you already ran those commands, you can continue from **Step 4**.
+
+This single flow covers:
 
 - Manager + sensor on the same machine
 - One manager with one or many remote sensor hosts
@@ -245,14 +235,18 @@ At the end you will see:
   Admin password: <generated>
 ```
 
-**Step 4 — If sensors will run on other hosts, set a reachable manager address**
+**Step 4 — Verify the manager address used in sensor onboarding**
 
-If you will run sensors on the same machine as the manager, you can skip this step.
+Fresh installs usually auto-fill these values for you. Before generating sensor commands, verify that the address in `.env` matches how sensor hosts will actually reach the manager.
 
-If sensors will run on other hosts, edit `.env` on the management server:
+- If the sensor will run on the same machine as the manager, the auto-detected value is usually fine.
+- If sensors will run on other hosts, `SENSOR_PUBLIC_MANAGER_ADDR` must be a real IP or DNS name reachable from those hosts.
+- Override these values only if the auto-detected address is wrong, the host IP changed, or the manager sits behind NAT / non-default routing.
+
+Example for a manager reachable at `192.168.1.10`:
 
 ```dotenv
-GRPC_HOST=192.168.1.10
+GRPC_HOST=0.0.0.0
 SENSOR_PUBLIC_MANAGER_ADDR=192.168.1.10:9443
 ```
 
@@ -262,11 +256,11 @@ Then restart the manager:
 docker compose up -d manager
 ```
 
-`SENSOR_PUBLIC_MANAGER_ADDR` must point to an address that sensor hosts can actually reach. The UI warns you if it is still set to loopback or a wildcard bind address.
+The UI warns you if `SENSOR_PUBLIC_MANAGER_ADDR` still points to loopback or an unusable wildcard host.
 
 **Step 5 — Log into the UI and create sensors**
 
-1. Open `http://localhost:3000` and log in as the superadmin.
+1. Open the management UI (`http://localhost:3000` on a local install) and log in as the superadmin.
 2. Go to **Sensors → Add Sensor**.
 3. Enter a sensor name such as `local-sensor`, `ot-segment-a`, or `ot-segment-b`.
 4. Click **Generate**.
@@ -274,9 +268,9 @@ docker compose up -d manager
 
 The UI generates:
 
-- **Install Command** — recommended for most deployments; clones the repo on the target host, builds the sensor image locally, and starts the container
-- **Docker run** — optional advanced path for pre-built image workflows
-- **`.env.sensor` + Compose** — optional advanced path using `docker-compose.sensor.yml`
+- **Install Command** — recommended for most deployments; downloads a generated installer from the manager, clones the repo on the target host, builds the sensor image locally, and starts the container
+- **Docker run** — advanced path for operators who publish their own sensor image
+- **`.env.sensor` + Compose** — advanced path using `docker-compose.sensor.yml` and your own sensor image
 
 This is the recommended sensor onboarding flow for both a single local sensor and multiple remote sensors. Repeat the same UI flow for every additional host.
 
@@ -291,6 +285,8 @@ docker logs <sensor-container-name>
 Expected output includes a successful join message.
 
 **Optional — Pre-built image workflow for many hosts**
+
+Use this only if you manage your own registry. The default `ghcr.io/otrap/sensor:latest` value is a placeholder and is not published publicly.
 
 If you do not want each target host to clone the repo and build locally, build and push the sensor image once:
 
@@ -358,7 +354,7 @@ All configuration is managed via environment variables in `.env`. The installer 
 | `GRPC_CA_CERT_B64` | Base64-encoded CA certificate. Auto-generated. |
 | `JOIN_TOKEN_TTL_HOURS` | Join token validity period. Default: `24` |
 | `SENSOR_PUBLIC_MANAGER_ADDR` | `host:port` embedded in generated sensor commands. |
-| `INSTALLER_BASE_URL_OVERRIDE` | Optional HTTP base URL used in generated `curl | bash` installer commands. |
+| `INSTALLER_BASE_URL_OVERRIDE` | Optional HTTP base URL used only in generated `curl | bash` installer commands. |
 | `SENSOR_IMAGE_REF` | Docker image used in pre-built-image onboarding commands. The default `ghcr.io/otrap/sensor:latest` is a placeholder; build and push your own image first. |
 | `SENSOR_CERT_ENC_KEY` | 64-char hex for encrypting sensor certs at rest. Auto-generated. |
 | `SENSOR_INSECURE_JOIN` | `true` for initial join. Set `false` after all sensors have joined. |
@@ -475,9 +471,9 @@ OTrap uses locally-running LLMs for session analysis, attacker profiling, and tr
 
 | Model | Pull command | Notes |
 |---|---|---|
-| Llama 3.1 8B | `ollama pull llama3.1:8b` | Best instruction following at 8B |
-| Gemma 2 9B | `ollama pull gemma2:9b` | Excellent quality/size ratio |
-| Qwen 2.5 7B | `ollama pull qwen2.5:7b` | Strong structured output |
+| Llama 3.1 8B | `ollama pull llama3.1:8b` | 8B text model with 128K context on Ollama |
+| Gemma 2 9B | `ollama pull gemma2:9b` | 9B text model with 8K context on Ollama |
+| Qwen 2.5 7B | `ollama pull qwen2.5:7b` | 7B text model with 32K context on Ollama |
 
 **Setup with Ollama:**
 
@@ -492,7 +488,7 @@ OLLAMA_BASE_URL=http://192.168.1.10:11434
 LLM_DEFAULT_MODEL=llama3.1:8b
 ```
 
-Then configure in **Admin → LLM Configuration** and test the connection.
+Then configure in **Admin → Local LLM Configuration** and test the connection.
 
 **Setup with LM Studio:**
 
@@ -511,8 +507,8 @@ LM_STUDIO_BASE_URL=http://192.168.1.10:1234
 | Protocol | Port | Emulated Behaviors |
 |---|---|---|
 | **Siemens S7comm** | TCP/102 | TPKT/COTP/S7 handshake, CPU status, DB read/write (persistent memory), system info, CPU STOP |
-| **Modbus/TCP** | TCP/502 | FC1–FC4 (read coils/registers), FC5–FC6 (write single), FC15–FC16 (write multiple), exception responses |
-| **EtherNet/IP** | TCP/44818 | CIP identity object, list services, list identity |
+| **Modbus/TCP** | TCP/502 | FC1–FC4 (read coils/registers), FC5–FC6 (write single), FC15–FC16 (write multiple), MEI device identification (0x2B), exception responses |
+| **EtherNet/IP** | TCP/44818 | ListServices, ListIdentity, Register/Unregister Session, and SendRRData/CIP explicit messaging probes |
 | **HMI HTTP** | TCP/80 | Login portal, session cookies, OWASP probe detection, path traversal logging |
 | **HMI HTTPS** | TCP/443 | Same as HTTP with auto-generated self-signed TLS certificate |
 
@@ -536,11 +532,11 @@ For production deployments:
    SESSION_SECURE=true
    ```
 4. **Do not expose port 9443** (gRPC) to the internet — sensor hosts only
-5. **Sensor ports 102/502/80/443** should be reachable from OT segments only — not from the internet
+5. **Sensor ports 102/502/80/443** and optionally `44818` should be reachable from OT segments only — not from the internet
 6. **Keep `GRPC_CA_KEY_B64` secret** — it is the root signing key for all sensor certificates
 7. **Set `SENSOR_INSECURE_JOIN=false`** after all sensors have completed their initial join
 8. **Rotate sensor tokens** — each token is single-use; revoke unused sensors from the Sensors page
-9. **Use a private registry** for the sensor image — do not push it to a public registry without reviewing the code
+9. **Use a private registry** if you adopt the pre-built-image workflow — do not assume the placeholder image is public
 
 ---
 
@@ -555,19 +551,20 @@ OTrap supports two roles:
 
 Manage users at **Admin → Users**:
 - Create users with username, email, and role assignment
-- Activate or deactivate accounts without deleting them
-- Trigger a forced password reset for any user
+- Update email/role, set a new password, or deactivate accounts
+- Delete accounts after re-authentication when needed
 
-The initial superadmin account is created automatically on first startup using `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD` from `.env`. Self-service password reset is available via the login page.
+The initial superadmin account is created automatically on first startup using `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD` from `.env`. Self-service password reset is available from the login page when SMTP is configured.
 
 ### Audit Log
 
-All administrative actions are recorded and viewable at **Admin → Audit**:
-- User creation, role changes, and deactivations
-- Integration configuration changes (SIEM, SMTP, LLM)
-- Alert rule changes
-- Session triage actions
-- Sensor enrollment and revocation
+All administrative actions are recorded and viewable at **Admin → Audit**. The screen supports:
+- Username, action, and date-range filtering
+- CSV export of the currently loaded audit rows
+- Configurable retention in days
+- Manual purge of older records after re-authentication
+
+Recorded events include user management, integration changes, alert rule updates, session triage actions, and sensor enrollment or revocation.
 
 ---
 
@@ -599,18 +596,18 @@ PDF reports are generated on-demand at **Reports → Generate**. Each report inc
 - MITRE ATT&CK for ICS observed techniques
 - Geographic distribution snapshot
 
-Generated reports are saved server-side, listed in report history, and can be viewed, downloaded as PDF, or deleted later from the UI.
+Generated report snapshots are saved in the manager database, listed in report history, and can later be viewed, downloaded as PDF, or deleted from the UI.
 
 ---
 
 ## 💾 Backup & Restore
 
-### Manual Backup
+### CLI Backup
 
 ```bash
-make backup
-# or directly:
 ./scripts/backup.sh
+# or:
+make backup
 ```
 
 Creates a timestamped PostgreSQL dump in the `backups/` directory. The dump includes all sessions, events, IOCs, attacker data, sensors, users, alert rules, and integration configuration.
@@ -624,19 +621,19 @@ Add a cron job on the management server:
 0 2 * * * cd /opt/otrap && ./scripts/backup.sh >> /var/log/otrap-backup.log 2>&1
 ```
 
-### Restore
+### CLI Restore
 
 ```bash
-# List available backups
-ls backups/
-
-# Restore from a specific dump
-BACKUP_FILE=backups/otrap_2024-01-15_02-00.sql ./scripts/restore.sh
+./scripts/restore.sh backups/otrap_20260325_120000.sql.gz
+# or:
+make restore FILE=backups/otrap_20260325_120000.sql.gz
 ```
 
-The restore script stops the manager, applies the dump, and restarts automatically.
+The restore script asks for confirmation, drops and recreates the PostgreSQL database, restores the selected `.sql.gz` dump, and then tells you to restart the manager.
 
-Backups can also be created, downloaded, deleted, and restored from **Admin → Backup** in the management console. The same screen also supports uploading a `.sql.gz` file and restoring from it.
+### UI Backup & Restore
+
+Backups can also be created, downloaded, deleted, and restored from **Admin → Backup** in the management console. The same screen supports uploading a `.sql.gz` file and restoring from it. These UI actions require re-authentication.
 
 ---
 
