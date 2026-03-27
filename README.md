@@ -189,6 +189,8 @@ All services — manager, database, cache, UI, and a local sensor — run on one
 ```bash
 git clone https://github.com/Janberkb/OTrap-v2-ICS-Honeypot-Intelligence-Platform.git otrap
 cd otrap
+make install-manager
+OR continue to step 2
 ```
 
 **Step 2 — Configure environment**
