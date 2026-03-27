@@ -21,12 +21,18 @@ OTrap is a distributed ICS/OT honeypot platform that deploys stateful protocol e
 - **HMI HTTP/HTTPS** — realistic login portal with OWASP probe detection and brute-force logging
 
 **Detection & Intelligence**
-- MITRE ATT&CK for ICS tactic/technique mapping per session
-- IOC extraction (IPs, domains, URLs, credentials, payloads, hashes)
-- GeoIP enrichment with ASN and country data
+- MITRE ATT&CK for ICS tactic/technique mapping per session (26 unique techniques across 11 tactics)
+- IOC extraction: source IPs, usernames, passwords, S7/EtherNet/IP payloads, SQL injection payloads, path traversal probes, URL paths, HTTP User-Agent strings, Modbus function codes and write values, C2 domains
+- GeoIP enrichment with country, city, and ASN/ISP data (offline, MaxMind GeoLite2)
 - Threat intelligence integration (GreyNoise, AbuseIPDB)
-- Kill chain phase detection (reconnaissance → impact)
+- Kill chain phase detection: Initial Access → Discovery → Collection → Execution → Persistence → Lateral Movement → C2 → Impair Process Control → Inhibit Response Function → Impact
 - STIX 2.1 export per session and per attacker
+
+**Attacker Profiles**
+- Per-IP aggregated view: GeoIP location, ASN, GreyNoise/AbuseIPDB reputation
+- Full session history for the IP with MITRE techniques observed across all sessions
+- Complete IOC inventory attributed to that attacker
+- Consolidated kill chain view across all observed interactions
 
 **Sensor Mesh**
 - Go binary sensor with gRPC + mTLS communication
@@ -70,11 +76,11 @@ OTrap is a distributed ICS/OT honeypot platform that deploys stateful protocol e
 OT Network                           Management Network
 ────────────────────                 ──────────────────────────────────────
 OTrap Sensor (Go)   ──gRPC/mTLS──▶  OTrap Manager (FastAPI)
-  :102  S7comm                         :8080  REST API + SSE
-  :502  Modbus/TCP                     :9443  gRPC (sensor mesh)
-  :80   HMI HTTP                     PostgreSQL 16    (sessions, IOCs, audit)
-  :443  HMI HTTPS                    Redis 7          (pub/sub, caching, health)
-                                     Next.js UI :3000 (SOC console)
+  :102   S7comm                        :8080  REST API + SSE
+  :502   Modbus/TCP                    :9443  gRPC (sensor mesh)
+  :44818 EtherNet/IP                 PostgreSQL 16    (sessions, IOCs, audit)
+  :80    HMI HTTP                    Redis 7          (pub/sub, caching, health)
+  :443   HMI HTTPS                   Next.js UI :3000 (SOC console)
                                      LLM Engine :8001 (optional, Ollama)
 ```
 
@@ -89,7 +95,7 @@ OTrap Sensor (Go)   ──gRPC/mTLS──▶  OTrap Manager (FastAPI)
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/Janberkb/otrap.git
+git clone https://github.com/Janberkb/OTrap-v2-ICS-Honeypot-Intelligence-Platform.git otrap
 cd otrap
 cp .env.example .env
 ./scripts/install_manager.sh
@@ -181,7 +187,7 @@ All services — manager, database, cache, UI, and a local sensor — run on one
 **Step 1 — Clone the repository**
 
 ```bash
-git clone https://github.com/Janberkb/otrap.git
+git clone https://github.com/Janberkb/OTrap-v2-ICS-Honeypot-Intelligence-Platform.git otrap
 cd otrap
 ```
 
@@ -431,6 +437,48 @@ All configuration is managed via environment variables in `.env`. The installer 
 
 ## 🔌 Integrations
 
+### GeoIP Enrichment (MaxMind GeoLite2)
+
+OTrap resolves attacker IPs to country, city, and ASN/ISP data using MaxMind's free GeoLite2 databases. All lookups are done offline — no external API calls, fully air-gap compatible. Results are cached in Redis for 24 hours.
+
+**Step 1 — Register for a free MaxMind account**
+
+Go to [maxmind.com/en/geolite2/signup](https://www.maxmind.com/en/geolite2/signup), create a free account, and generate a license key from your account dashboard.
+
+**Step 2 — Add your license key to `.env`**
+
+```dotenv
+MAXMIND_LICENSE_KEY=your_license_key_here
+```
+
+**Step 3 — Download the databases**
+
+```bash
+source .env && ./scripts/download_geoip.sh
+```
+
+This downloads three files to `manager/data/`:
+
+| File | Used for |
+|---|---|
+| `GeoLite2-City.mmdb` | Country and city resolution |
+| `GeoLite2-ASN.mmdb` | ASN number and ISP/org name |
+| `GeoLite2-Country.mmdb` | Lightweight country-only fallback |
+
+**Step 4 — Restart the manager**
+
+```bash
+docker compose restart manager
+```
+
+GeoIP data appears immediately in attacker profiles, session detail views, the live event feed, and PDF reports. Private-range IPs (RFC1918, loopback) always resolve to "Private Network" regardless of database availability.
+
+> **Without databases:** OTrap works normally but attacker IPs will show no geographic data. You can add databases at any time without losing existing event data.
+
+> **License note:** GeoLite2 databases are subject to [MaxMind's EULA](https://www.maxmind.com/en/geolite2/eula) and are excluded from this repository (`.gitignore`). Do not redistribute the `.mmdb` files.
+
+---
+
 ### Threat Intelligence (GreyNoise, AbuseIPDB)
 
 Set API keys in `.env` and restart the manager. Enrichment happens automatically on every new source IP — no UI action needed. Free tiers are sufficient for most honeypot deployments.
@@ -540,6 +588,98 @@ For production deployments:
 7. **Set `SENSOR_INSECURE_JOIN=false`** after all sensors have completed their initial join
 8. **Rotate sensor tokens** — each token is single-use; revoke unused sensors from the Sensors page
 9. **Use a private registry** for the sensor image — do not push it to a public registry without reviewing the code
+
+---
+
+## 👥 User Management & RBAC
+
+OTrap supports two roles:
+
+| Role | Access |
+|---|---|
+| **Superadmin** | Full access: all operator views + Admin panel (users, integrations, alert rules, audit log, backup, system) |
+| **Operator** | Read access to dashboard, sessions, attackers, IOCs, sensors, health, and reports. Can triage sessions and generate PDF reports. |
+
+Manage users at **Admin → Users**:
+- Create users with username, email, and role assignment
+- Activate or deactivate accounts without deleting them
+- Trigger a forced password reset for any user
+
+The initial superadmin account is created automatically on first startup using `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD` from `.env`. Self-service password reset is available via the login page.
+
+### Audit Log
+
+All administrative actions are recorded and viewable at **Admin → Audit**:
+- User creation, role changes, and deactivations
+- Integration configuration changes (SIEM, SMTP, LLM)
+- Alert rule changes
+- Session triage actions
+- Sensor enrollment and revocation
+
+---
+
+## 🔔 Alert Rules
+
+Alert rules define conditions under which email notifications are sent. Configure at **Admin → Alert Rules**.
+
+Each rule specifies:
+- **Name** — a human-readable label for the rule
+- **Event types** — one or more honeypot event types that trigger the rule (e.g. `S7_CPU_STOP`, `HMI_LOGIN_SUCCESS`, `MODBUS_WRITE_MULTIPLE`)
+- **Minimum severity** — filter by severity level (low / medium / high / critical)
+- **Enabled** toggle — pause a rule without deleting it
+
+Rules are evaluated by the analyzer worker immediately after each event is processed. Email delivery uses the SMTP settings configured in **Admin → Notifications**. A per-rule cooldown suppresses duplicate alerts for the same source IP within the configured window.
+
+---
+
+## 📊 Reports
+
+PDF reports are generated on-demand at **Reports → Generate**. Each report includes:
+- Executive summary: total sessions, unique attackers, top protocols, date range
+- Attacker table with GeoIP, ASN, and session counts
+- Top IOCs by frequency and confidence score
+- MITRE ATT&CK for ICS technique matrix heatmap
+- Per-sensor event breakdown
+- Full session log with timestamps, severities, and kill chain phases
+
+Generated reports are saved server-side and listed in the report history. Reports can be re-downloaded at any time.
+
+---
+
+## 💾 Backup & Restore
+
+### Manual Backup
+
+```bash
+make backup
+# or directly:
+./scripts/backup.sh
+```
+
+Creates a timestamped PostgreSQL dump in the `backups/` directory. The dump includes all sessions, events, IOCs, attacker data, sensors, users, alert rules, and integration configuration.
+
+### Scheduled Backups
+
+Add a cron job on the management server:
+
+```bash
+# Daily backup at 2:00 AM
+0 2 * * * cd /opt/otrap && ./scripts/backup.sh >> /var/log/otrap-backup.log 2>&1
+```
+
+### Restore
+
+```bash
+# List available backups
+ls backups/
+
+# Restore from a specific dump
+BACKUP_FILE=backups/otrap_2024-01-15_02-00.sql ./scripts/restore.sh
+```
+
+The restore script stops the manager, applies the dump, and restarts automatically.
+
+Backups can also be triggered and downloaded from **Admin → Backup** in the management console.
 
 ---
 

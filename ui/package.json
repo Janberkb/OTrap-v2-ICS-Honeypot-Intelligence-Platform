@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@react-pdf/renderer": "^3.4.5",
+    "@react-pdf/renderer": "3.4.5",
     "clsx": "2.1.1",
     "date-fns": "3.6.0",
     "lucide-react": "0.378.0",
