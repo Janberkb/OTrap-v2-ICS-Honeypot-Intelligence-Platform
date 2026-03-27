@@ -7,6 +7,7 @@ import {
   Document, Page, View, Text, StyleSheet,
   Svg, G, Rect, Line,
 } from "@react-pdf/renderer";
+import { buildReportSummary, normalizeReportData } from "@/lib/report-utils";
 
 // ─── Design tokens (matching app dark palette) ────────────────────────────────
 
@@ -281,16 +282,18 @@ export interface ReportPDFProps {
 }
 
 function ReportPDF({ data, title, rangeLabel, genDate }: ReportPDFProps) {
-  const sessions  = data?.sessions  ?? [];
-  const attackers = data?.attackers ?? [];
-  const histogram = data?.histogram ?? [];
-  const iocs      = data?.iocs      ?? [];
-  const stats     = data?.stats     ?? {};
+  const normalizedData = normalizeReportData(data);
+  const sessions  = normalizedData.sessions ?? [];
+  const attackers = normalizedData.attackers ?? [];
+  const histogram = normalizedData.histogram ?? [];
+  const iocs      = normalizedData.iocs ?? [];
+  const stats     = normalizedData.stats ?? {};
   const protocols = stats?.protocols ?? [];
+  const reportSummary = buildReportSummary(normalizedData);
 
-  const totalEvents  = histogram.reduce((s: number, b: any) => s + b.count, 0);
-  const criticalHigh = sessions.filter((s: any) => ["critical","high"].includes(s.severity)).length;
-  const cpuStops     = sessions.filter((s: any) => s.cpu_stop_occurred).length;
+  const totalEvents  = reportSummary.totalEvents;
+  const criticalHigh = reportSummary.criticalHigh;
+  const cpuStops     = reportSummary.cpuStops;
 
   const sevDist: Record<string, number> = {};
   sessions.forEach((s: any) => { sevDist[s.severity] = (sevDist[s.severity] ?? 0) + 1; });
@@ -355,20 +358,15 @@ function ReportPDF({ data, title, rangeLabel, genDate }: ReportPDFProps) {
         ]} />
         <KpiRow cards={[
           { label: "IOCs Identified",     value: iocs.length,                                         accent: "#4ade80" },
-          { label: "Actionable Sessions", value: sessions.filter((s: any) => s.is_actionable).length, accent: "#fbbf24" },
-          { label: "Unique Countries",    value: stats?.top_countries?.length ?? 0,                   accent: "#22d3ee" },
+          { label: "Actionable Sessions", value: reportSummary.actionableSessions,                    accent: "#fbbf24" },
+          { label: "External Countries",  value: reportSummary.externalCountryCount,                  accent: "#22d3ee" },
         ]} />
 
         {/* ── RISK SCORE + TOP FINDINGS + RECOMMENDATIONS ── */}
         {(() => {
           const riskScore   = calcRiskScore(sessions, cpuStops);
           const risk        = riskLabel(riskScore);
-          const SEV_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, noise: 4 };
-          const topFindings = [...sessions]
-            .sort((a: any, b: any) => (SEV_ORDER[a.severity] ?? 5) - (SEV_ORDER[b.severity] ?? 5))
-            .slice(0, 3);
-          const protocolNames = protocols.map((p: any) => p.protocol as string);
-          const recs = getRecommendations(protocolNames, cpuStops);
+          const recs = reportSummary.recommendations;
 
           return (
             <View style={s.execRow}>
@@ -381,22 +379,18 @@ function ReportPDF({ data, title, rangeLabel, genDate }: ReportPDFProps) {
                 </View>
               </View>
 
-              {/* Top Findings */}
+              {/* Operator Focus */}
               <View style={s.findingBox}>
-                <Text style={s.findingTitle}>Top Findings</Text>
-                {topFindings.length === 0
+                <Text style={s.findingTitle}>Operator Focus</Text>
+                {reportSummary.impactSummary.length === 0
                   ? <Text style={{ fontSize: 8, color: C.textFaint }}>No sessions recorded in this period.</Text>
-                  : topFindings.map((f: any, i: number) => {
-                      const sev = (f.severity ?? "noise").toLowerCase();
+                  : reportSummary.impactSummary.map((line: string, i: number) => {
                       return (
-                        <View key={i} style={[s.findingRow, i === topFindings.length - 1 ? { borderBottomWidth: 0, marginBottom: 0, paddingBottom: 0 } : {}]}>
-                          <View style={{ backgroundColor: SEV_BG[sev] ?? C.elevated, borderRadius: 3, borderWidth: 0.5, borderColor: SEV_BORDER[sev] ?? C.border, paddingHorizontal: 4, paddingVertical: 2, flexShrink: 0 }}>
-                            <Text style={{ fontSize: 6.5, fontFamily: "Helvetica-Bold", textTransform: "uppercase", color: SEV_COLOR[sev] ?? C.textMuted }}>{sev}</Text>
+                        <View key={i} style={[s.findingRow, i === reportSummary.impactSummary.length - 1 ? { borderBottomWidth: 0, marginBottom: 0, paddingBottom: 0 } : {}]}>
+                          <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: C.accentDim, alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <Text style={{ fontSize: 6.5, fontFamily: "Helvetica-Bold", color: C.accent }}>{i + 1}</Text>
                           </View>
-                          <Text style={{ fontSize: 8, fontFamily: "Courier", color: C.textPrimary, flexShrink: 0 }}>{f.source_ip}</Text>
-                          <Text style={{ fontSize: 7.5, color: C.textMuted, flex: 1 }}>
-                            {f.primary_protocol?.toUpperCase() ?? "UNKNOWN"}  ·  {f.event_count ?? 0} events{f.cpu_stop_occurred ? "  ·  CPU STOP" : ""}
-                          </Text>
+                          <Text style={{ fontSize: 7.5, color: C.textMuted, flex: 1, lineHeight: 1.5 }}>{line}</Text>
                         </View>
                       );
                     })
@@ -542,6 +536,13 @@ function ReportPDF({ data, title, rangeLabel, genDate }: ReportPDFProps) {
         {iocs.length > 0 && (
           <View style={{ marginBottom: 18 }}>
             <SectionTitle>{`Indicators of Compromise  (${iocs.length} IOCs)`}</SectionTitle>
+            {reportSummary.redactedIndicatorCount > 0 && (
+              <View style={{ marginBottom: 8, backgroundColor: C.elevated, borderRadius: 6, borderWidth: 0.5, borderColor: C.border, paddingHorizontal: 10, paddingVertical: 8 }}>
+                <Text style={{ fontSize: 7.5, color: C.textMuted }}>
+                  Credential indicators are intentionally redacted in stored reports and PDF exports.
+                </Text>
+              </View>
+            )}
             <View style={s.card}>
               <TableHeader cols={[
                 { label: "Type",        flex: 0.9 },
@@ -602,6 +603,13 @@ function ReportPDF({ data, title, rangeLabel, genDate }: ReportPDFProps) {
         {(stats?.top_countries?.length ?? 0) > 0 && (
           <View>
             <SectionTitle>Geographic Distribution</SectionTitle>
+            {reportSummary.hasPrivateCountryTraffic && (
+              <View style={{ marginBottom: 8, backgroundColor: C.elevated, borderRadius: 6, borderWidth: 0.5, borderColor: C.border, paddingHorizontal: 10, paddingVertical: 8 }}>
+                <Text style={{ fontSize: 7.5, color: C.textMuted }}>
+                  Private-network traffic is shown separately and excluded from the external country KPI.
+                </Text>
+              </View>
+            )}
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {stats.top_countries.map((c: any) => (
                 <View key={c.country_code} style={{ width: "31%", backgroundColor: C.surface, borderRadius: 6, borderWidth: 0.5, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 8, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>

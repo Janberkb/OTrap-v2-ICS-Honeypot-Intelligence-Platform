@@ -25,6 +25,8 @@ async def list_iocs(
     ioc_type:       str | None = Query(None),
     search:         str | None = Query(None),
     min_confidence: float | None = Query(None, ge=0.0, le=1.0),
+    from_dt:        str | None = Query(None),
+    to_dt:          str | None = Query(None),
     limit:          int = Query(100, ge=1, le=1000),
     offset:         int = Query(0, ge=0),
     db=Depends(get_db),
@@ -51,6 +53,10 @@ async def list_iocs(
         base = base.where(models.IOC.ioc_type == ioc_type)
     if search:
         base = base.where(models.IOC.value.ilike(f"%{search}%"))
+    if from_dt:
+        base = base.where(models.IOC.last_seen_at >= from_dt)
+    if to_dt:
+        base = base.where(models.IOC.first_seen_at <= to_dt)
     if min_confidence is not None:
         base = base.having(func.max(models.IOC.confidence) >= min_confidence)
 
@@ -88,6 +94,8 @@ async def list_iocs(
 async def export_iocs_stix(
     ioc_type: str | None = Query(None),
     search:   str | None = Query(None),
+    from_dt:  str | None = Query(None),
+    to_dt:    str | None = Query(None),
     db=Depends(get_db),
     user=Depends(get_current_user),
 ) -> StreamingResponse:
@@ -105,6 +113,10 @@ async def export_iocs_stix(
         q = q.where(models.IOC.ioc_type == ioc_type)
     if search:
         q = q.where(models.IOC.value.ilike(f"%{search}%"))
+    if from_dt:
+        q = q.where(models.IOC.last_seen_at >= from_dt)
+    if to_dt:
+        q = q.where(models.IOC.first_seen_at <= to_dt)
     q = q.order_by(func.max(models.IOC.last_seen_at).desc()).limit(10_000)
 
     rows = (await db.execute(q)).all()

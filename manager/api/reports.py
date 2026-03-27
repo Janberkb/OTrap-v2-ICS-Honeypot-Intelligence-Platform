@@ -18,6 +18,7 @@ from manager.db import models
 from manager.db.engine import get_db
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+_SENSITIVE_REPORT_IOC_TYPES = {"username", "password"}
 
 
 class ReportCreateRequest(BaseModel):
@@ -42,9 +43,55 @@ def _serialize_meta(r: models.Report) -> dict:
     }
 
 
+def _mask_report_ioc_value(ioc_type: str | None, value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+
+    kind = (ioc_type or "").lower()
+    if kind == "password":
+        return "********"
+    if kind == "username":
+        if "@" in value:
+            local, _, domain = value.partition("@")
+            if len(local) <= 1:
+                return f"*@{domain}" if domain else "*"
+            if len(local) == 2:
+                return f"{local[0]}*@{domain}" if domain else f"{local[0]}*"
+            masked = f"{local[:2]}{'*' * max(len(local) - 2, 2)}"
+            return f"{masked}@{domain}" if domain else masked
+        if len(value) <= 1:
+            return "*"
+        if len(value) <= 3:
+            return value[0] + ("*" * (len(value) - 1))
+        return f"{value[:2]}{'*' * max(len(value) - 3, 2)}{value[-1]}"
+    return value
+
+
+def _sanitize_report_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
+    if data is None or not isinstance(data, dict):
+        return data
+
+    sanitized = dict(data)
+    raw_iocs = sanitized.get("iocs")
+    if isinstance(raw_iocs, list):
+        safe_iocs = []
+        for item in raw_iocs:
+            if not isinstance(item, dict):
+                safe_iocs.append(item)
+                continue
+            row = dict(item)
+            kind = (row.get("ioc_type") or "").lower()
+            row["value"] = _mask_report_ioc_value(kind, row.get("value"))
+            if kind in _SENSITIVE_REPORT_IOC_TYPES:
+                row["is_redacted"] = True
+            safe_iocs.append(row)
+        sanitized["iocs"] = safe_iocs
+    return sanitized
+
+
 def _serialize_full(r: models.Report) -> dict:
     meta = _serialize_meta(r)
-    meta["data"] = r.data
+    meta["data"] = _sanitize_report_data(r.data)
     return meta
 
 
@@ -69,7 +116,7 @@ async def create_report(
         title=payload.title.strip(),
         range_label=payload.range_label,
         range_hours=payload.range_hours,
-        data=payload.data,
+        data=_sanitize_report_data(payload.data),
     )
     db.add(report)
     await db.commit()

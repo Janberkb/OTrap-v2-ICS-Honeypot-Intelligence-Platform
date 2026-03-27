@@ -33,8 +33,16 @@ const ACTION_COLORS: Record<string, string> = {
   // Config
   update_smtp_config:      "badge-medium",
   update_siem_config:      "badge-medium",
+  update_llm_config:       "badge-medium",
   test_smtp:               "badge-noise",
   test_siem:               "badge-noise",
+  test_llm_connection:     "badge-noise",
+  // Backup
+  create_backup:           "badge-medium",
+  download_backup:         "badge-medium",
+  delete_backup:           "badge-critical",
+  restore_backup:          "badge-critical",
+  restore_backup_upload:   "badge-critical",
   // Audit
   update_audit_retention:  "badge-medium",
   purge_audit_log:         "badge-critical",

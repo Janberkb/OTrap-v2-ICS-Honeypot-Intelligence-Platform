@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Brain, CheckCircle, XCircle, Loader, AlertTriangle } from "lucide-react";
+import { ReauthModal } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
 function getCsrf() {
@@ -14,6 +15,9 @@ export default function LLMConfigPage() {
   const [saving,   setSaving]   = useState(false);
   const [saved,    setSaved]    = useState(false);
   const [error,    setError]    = useState("");
+  const [reauthOpen,    setReauthOpen]    = useState(false);
+  const [reauthLoading, setReauthLoading] = useState(false);
+  const [reauthError,   setReauthError]   = useState("");
 
   // Form state
   const [enabled,      setEnabled]      = useState(false);
@@ -61,9 +65,28 @@ export default function LLMConfigPage() {
       localStorage.removeItem("llm_enabled_cache");
     } else {
       const d = await r.json().catch(() => ({}));
-      setError(d?.detail || d?.error || "Save failed");
+      setError(d?.detail?.error || d?.detail || d?.error || "Save failed");
     }
     setSaving(false);
+  }
+
+  async function doReauth(password: string) {
+    setReauthLoading(true);
+    setReauthError("");
+    const r = await fetch(apiPath("/auth/reauth"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": getCsrf() },
+      body: JSON.stringify({ password }),
+    });
+    if (!r.ok) {
+      setReauthError("Incorrect password");
+      setReauthLoading(false);
+      return;
+    }
+    setReauthOpen(false);
+    setReauthLoading(false);
+    await save();
   }
 
   async function testConnection() {
@@ -74,7 +97,7 @@ export default function LLMConfigPage() {
     const r = await fetch(apiPath("/admin/llm-config/test"), {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": getCsrf() },
       body: JSON.stringify({ base_url: url, backend }),
     });
     const d = await r.json().catch(() => ({ ok: false, detail: "Invalid response" }));
@@ -256,7 +279,7 @@ export default function LLMConfigPage() {
         )}
         <div className="flex items-center gap-3 pt-1">
           <button
-            onClick={save}
+            onClick={() => { setReauthError(""); setReauthOpen(true); }}
             disabled={saving}
             className="btn-primary px-6 py-2 text-sm disabled:opacity-50"
           >
@@ -270,6 +293,14 @@ export default function LLMConfigPage() {
           )}
         </div>
       </div>
+
+      <ReauthModal
+        open={reauthOpen}
+        onConfirm={doReauth}
+        onCancel={() => setReauthOpen(false)}
+        loading={reauthLoading}
+        error={reauthError}
+      />
     </div>
   );
 }

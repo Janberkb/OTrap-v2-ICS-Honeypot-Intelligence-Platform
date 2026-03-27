@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiPath } from "@/lib/api";
+import { buildReportSummary, buildReportWindow, normalizeReportData } from "@/lib/report-utils";
 import {
   FileDown, Plus, Trash2, Loader2, FileText,
   CheckSquare, Square, AlertTriangle,
@@ -75,9 +76,9 @@ function ReportViewer({ reportId, onClose }: { reportId: string; onClose: () => 
       .then(report => {
         setTitle(report.title);
         setRange(report.range_label);
-        const d = report.data ?? { stats: {}, sessions: [], attackers: [], histogram: [], iocs: [], generated_at: report.generated_at };
+        const d = normalizeReportData(report.data, report.generated_at);
         setData(d);
-        setGenDate(new Date(d.generated_at ?? report.generated_at).toLocaleString("en-GB", { dateStyle: "long", timeStyle: "short" }));
+        setGenDate(new Date(d.generated_at).toLocaleString("en-GB", { dateStyle: "long", timeStyle: "short" }));
       })
       .catch(() => setError("Failed to load report"))
       .finally(() => setLoading(false));
@@ -89,10 +90,11 @@ function ReportViewer({ reportId, onClose }: { reportId: string; onClose: () => 
   const iocs      = data?.iocs      ?? [];
   const stats     = data?.stats     ?? {};
   const protocols = stats?.protocols ?? [];
+  const reportSummary = buildReportSummary({ stats, sessions, attackers, histogram, iocs });
 
-  const totalEvents  = histogram.reduce((s: number, b: any) => s + b.count, 0);
-  const criticalHigh = sessions.filter((s: any) => s.severity === "critical" || s.severity === "high").length;
-  const cpuStops     = sessions.filter((s: any) => s.cpu_stop_occurred).length;
+  const totalEvents  = reportSummary.totalEvents;
+  const criticalHigh = reportSummary.criticalHigh;
+  const cpuStops     = reportSummary.cpuStops;
 
   const sevDist: Record<string, number> = {};
   sessions.forEach((s: any) => { sevDist[s.severity] = (sevDist[s.severity] ?? 0) + 1; });
@@ -221,8 +223,58 @@ function ReportViewer({ reportId, onClose }: { reportId: string; onClose: () => 
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
                   <DKpiCard label="IOCs Identified"     value={iocs.length}                                  accent="#4ade80" />
-                  <DKpiCard label="Actionable Sessions" value={sessions.filter((s: any) => s.is_actionable).length} accent="#fbbf24" />
-                  <DKpiCard label="Unique Countries"    value={stats?.top_countries?.length ?? 0}            accent="#22d3ee" />
+                  <DKpiCard label="Actionable Sessions" value={reportSummary.actionableSessions}            accent="#fbbf24" />
+                  <DKpiCard label="External Countries"  value={reportSummary.externalCountryCount}          accent="#22d3ee" />
+                </div>
+              </div>
+
+              {/* ═══ OPERATOR CONTEXT ═══════════════════════════════════ */}
+              <div className="r-no-break" style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 16, marginBottom: 28 }}>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "16px 20px" }}>
+                  <DChartTitle>Operator Focus</DChartTitle>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {reportSummary.impactSummary.map((line, index) => (
+                      <div key={index} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <span style={{ width: 18, height: 18, borderRadius: 999, background: C.accentDim, color: "#93c5fd", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{index + 1}</span>
+                        <span style={{ fontSize: 12, lineHeight: 1.6, color: C.textMuted }}>{line}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "16px 20px" }}>
+                  <DChartTitle>Top Findings</DChartTitle>
+                  {reportSummary.topFindings.length === 0 ? (
+                    <p style={{ fontSize: 12, color: C.textFaint }}>No sessions recorded in this period.</p>
+                  ) : (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {reportSummary.topFindings.map((session: any) => {
+                        const severity = String(session.severity ?? "noise").toLowerCase();
+                        return (
+                          <div key={session.id} style={{ display: "grid", gap: 4, paddingBottom: 10, borderBottom: `1px solid ${C.borderFaint}` }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <DSevBadge sev={session.severity} />
+                              <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 11, color: C.textPrimary }}>{session.source_ip}</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>
+                              {session.primary_protocol?.toUpperCase() ?? "UNKNOWN"} · {session.event_count ?? 0} events · {session.ioc_count ?? 0} IOCs
+                              {session.cpu_stop_occurred && <span style={{ color: D_SEV_COLOR[severity] ?? D_SEV_COLOR.critical }}> · CPU STOP</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "16px 20px" }}>
+                  <DChartTitle>Recommended Actions</DChartTitle>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {reportSummary.recommendations.map((line, index) => (
+                      <div key={index} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <span style={{ width: 18, height: 18, borderRadius: 999, background: C.accentDim, color: "#93c5fd", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{index + 1}</span>
+                        <span style={{ fontSize: 12, lineHeight: 1.6, color: C.textMuted }}>{line}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -353,6 +405,11 @@ function ReportViewer({ reportId, onClose }: { reportId: string; onClose: () => 
               {iocs.length > 0 && (
                 <div className="r-page-break" style={{ marginBottom: 28 }}>
                   <DSectionTitle>Indicators of Compromise <span style={{ fontWeight: 400, color: C.textFaint, fontSize: 11 }}>({iocs.length} IOCs)</span></DSectionTitle>
+                  {reportSummary.redactedIndicatorCount > 0 && (
+                    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 7, background: "#111827", border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+                      Credential indicators are intentionally redacted in reports and PDF exports.
+                    </div>
+                  )}
                   <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }}>
                     <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
                       <thead>
@@ -414,6 +471,11 @@ function ReportViewer({ reportId, onClose }: { reportId: string; onClose: () => 
               {(stats?.top_countries?.length ?? 0) > 0 && (
                 <div className="r-no-break" style={{ marginBottom: 28 }}>
                   <DSectionTitle>Geographic Distribution</DSectionTitle>
+                  {reportSummary.hasPrivateCountryTraffic && (
+                    <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 7, background: "#111827", border: `1px solid ${C.border}`, fontSize: 11, color: C.textMuted }}>
+                      Private-network traffic is shown separately and excluded from the external country KPI.
+                    </div>
+                  )}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
                     {stats.top_countries.map((c: any) => (
                       <div key={c.country_code} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 7, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -571,14 +633,27 @@ export default function ReportsPage() {
     setGenerating(true); setGenError("");
     const opt       = RANGE_OPTIONS.find(o => o.value === rangeHours)!;
     const histHours = Math.min(rangeHours, 168);
+    const { from, to } = buildReportWindow(rangeHours);
     try {
       setGenProgress("Fetching session data…");
+      const sessionParams = new URLSearchParams({
+        limit: "200",
+        sort_by: "started_at",
+        sort_dir: "desc",
+        from_dt: from,
+        to_dt: to,
+      });
+      const iocParams = new URLSearchParams({
+        limit: "100",
+        from_dt: from,
+        to_dt: to,
+      });
       const [sRes, sessRes, atkRes, histRes, iocRes] = await Promise.all([
         fetch(apiPath(`/sessions/stats?hours=${rangeHours}`),                { credentials: "include" }),
-        fetch(apiPath(`/sessions?limit=200&sort_by=started_at&sort_dir=desc`), { credentials: "include" }),
+        fetch(apiPath(`/sessions?${sessionParams.toString()}`),              { credentials: "include" }),
         fetch(apiPath(`/events/top-attackers?hours=${rangeHours}&limit=25`), { credentials: "include" }),
         fetch(apiPath(`/events/histogram?hours=${histHours}`),               { credentials: "include" }),
-        fetch(apiPath(`/iocs?limit=100`),                                    { credentials: "include" }),
+        fetch(apiPath(`/iocs?${iocParams.toString()}`),                      { credentials: "include" }),
       ]);
       const [statsData, sessData, atkData, histData, iocData] = await Promise.all([
         sRes.ok    ? sRes.json()    : {},
@@ -588,11 +663,11 @@ export default function ReportsPage() {
         iocRes.ok  ? iocRes.json()  : { items: [] },
       ]);
       setGenProgress("Saving report…");
-      const snapshot = {
+      const snapshot = normalizeReportData({
         stats: statsData, sessions: sessData.items ?? [], attackers: atkData.items ?? [],
         histogram: histData.buckets ?? [], iocs: iocData.items ?? [],
         generated_at: new Date().toISOString(),
-      };
+      });
       const saveRes = await fetch(apiPath("/reports"), {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },

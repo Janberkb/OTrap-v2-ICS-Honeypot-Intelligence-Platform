@@ -22,6 +22,7 @@ from manager.grpc.sensor_service import SensorServicer
 from manager.grpc import sensor_pb2_grpc
 from manager.analyzer.worker import AnalyzerWorker
 from manager.api.routers import api_router
+from manager.security.csrf import CSRFMiddleware
 
 logger = logging.getLogger("otrap.manager")
 
@@ -115,6 +116,7 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
             allow_headers=["*"],
         )
+    app.add_middleware(CSRFMiddleware)
 
     # ── Routes ────────────────────────────────────────────────────────────────
     app.include_router(api_router, prefix="/api/v1")

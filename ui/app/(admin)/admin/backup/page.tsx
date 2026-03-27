@@ -5,6 +5,7 @@ import {
   HardDriveDownload, Plus, Trash2, UploadCloud,
   RotateCcw, AlertTriangle, CheckCircle2, Loader2,
 } from "lucide-react";
+import { ReauthModal } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 
 interface Backup {
@@ -12,6 +13,14 @@ interface Backup {
   size_bytes: number;
   created_at: string;
 }
+
+type OpState = "idle" | "running" | "ok" | "error";
+type PendingAction =
+  | { kind: "create" }
+  | { kind: "download"; filename: string }
+  | { kind: "delete"; filename: string }
+  | { kind: "restore"; filename: string }
+  | { kind: "upload"; file: File };
 
 function formatBytes(b: number) {
   if (b < 1024) return `${b} B`;
@@ -30,16 +39,28 @@ function getCsrf() {
   return document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
 }
 
-type OpState = "idle" | "running" | "ok" | "error";
+function errorMessage(data: any, fallback: string) {
+  if (!data) return fallback;
+  if (typeof data.detail === "string") return data.detail;
+  if (typeof data.error === "string") return data.error;
+  if (typeof data.detail?.message === "string") return data.detail.message;
+  if (typeof data.detail?.error === "string") return data.detail.error;
+  return fallback;
+}
 
 export default function BackupPage() {
-  const [backups,      setBackups]      = useState<Backup[]>([]);
-  const [loading,      setLoading]      = useState(true);
-  const [createState,  setCreateState]  = useState<OpState>("idle");
-  const [restoreState, setRestoreState] = useState<OpState>("idle");
-  const [restoreMsg,   setRestoreMsg]   = useState("");
-  const [confirmFile,  setConfirmFile]  = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [backups,        setBackups]        = useState<Backup[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [createState,    setCreateState]    = useState<OpState>("idle");
+  const [actionState,    setActionState]    = useState<OpState>("idle");
+  const [actionMsg,      setActionMsg]      = useState("");
+  const [confirmFile,    setConfirmFile]    = useState<string | null>(null);
+  const [deleteTarget,   setDeleteTarget]   = useState<string | null>(null);
+  const [downloadTarget, setDownloadTarget] = useState<string | null>(null);
+  const [reauthOpen,     setReauthOpen]     = useState(false);
+  const [reauthLoading,  setReauthLoading]  = useState(false);
+  const [reauthError,    setReauthError]    = useState("");
+  const [pendingAction,  setPendingAction]  = useState<PendingAction | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function loadBackups() {
@@ -52,78 +73,177 @@ export default function BackupPage() {
     setLoading(false);
   }
 
-  useEffect(() => { loadBackups(); }, []);
+  useEffect(() => { void loadBackups(); }, []);
 
   async function createBackup() {
     setCreateState("running");
     const r = await fetch(apiPath("/admin/system/backups"), {
-      method: "POST", credentials: "include",
+      method: "POST",
+      credentials: "include",
       headers: { "X-CSRF-Token": getCsrf() },
     });
     if (r.ok) {
       setCreateState("ok");
+      setActionState("ok");
+      setActionMsg("Backup created successfully.");
       await loadBackups();
       setTimeout(() => setCreateState("idle"), 3000);
-    } else {
-      setCreateState("error");
-      setTimeout(() => setCreateState("idle"), 4000);
+      return;
     }
+
+    const d = await r.json().catch(() => ({}));
+    setCreateState("error");
+    setActionState("error");
+    setActionMsg(errorMessage(d, "Backup creation failed."));
+    setTimeout(() => setCreateState("idle"), 4000);
   }
 
   async function deleteBackup(filename: string) {
-    await fetch(apiPath(`/admin/system/backups/${filename}`), {
-      method: "DELETE", credentials: "include",
+    setDeleteTarget(null);
+    setActionState("running");
+    setActionMsg("");
+    const r = await fetch(apiPath(`/admin/system/backups/${filename}`), {
+      method: "DELETE",
+      credentials: "include",
       headers: { "X-CSRF-Token": getCsrf() },
     });
-    setDeleteTarget(null);
-    await loadBackups();
+    if (r.ok) {
+      setActionState("ok");
+      setActionMsg(`${filename} deleted.`);
+      await loadBackups();
+      return;
+    }
+
+    const d = await r.json().catch(() => ({}));
+    setActionState("error");
+    setActionMsg(errorMessage(d, "Delete failed."));
   }
 
   async function restoreFromFile(filename: string) {
     setConfirmFile(null);
-    setRestoreState("running");
-    setRestoreMsg("");
+    setActionState("running");
+    setActionMsg("");
     const r = await fetch(apiPath(`/admin/system/backups/${filename}/restore`), {
-      method: "POST", credentials: "include",
+      method: "POST",
+      credentials: "include",
       headers: { "X-CSRF-Token": getCsrf() },
     });
     if (r.ok) {
-      setRestoreState("ok");
-      setRestoreMsg(`Restored from ${filename}. Refresh the page to verify data.`);
-    } else {
-      const d = await r.json().catch(() => ({}));
-      setRestoreState("error");
-      setRestoreMsg(d.detail ?? "Restore failed.");
+      setActionState("ok");
+      setActionMsg(`Restored from ${filename}. Refresh the page to verify data.`);
+      return;
     }
+
+    const d = await r.json().catch(() => ({}));
+    setActionState("error");
+    setActionMsg(errorMessage(d, "Restore failed."));
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setRestoreState("running");
-    setRestoreMsg("");
+  async function uploadAndRestore(file: File) {
+    setActionState("running");
+    setActionMsg("");
     const form = new FormData();
     form.append("file", file);
     const r = await fetch(apiPath("/admin/system/restore/upload"), {
-      method: "POST", credentials: "include",
+      method: "POST",
+      credentials: "include",
       headers: { "X-CSRF-Token": getCsrf() },
       body: form,
     });
     if (r.ok) {
-      setRestoreState("ok");
-      setRestoreMsg(`Uploaded and restored from ${file.name}. Refresh the page to verify data.`);
+      setActionState("ok");
+      setActionMsg(`Uploaded and restored from ${file.name}. Refresh the page to verify data.`);
       await loadBackups();
     } else {
       const d = await r.json().catch(() => ({}));
-      setRestoreState("error");
-      setRestoreMsg(d.detail ?? "Restore failed.");
+      setActionState("error");
+      setActionMsg(errorMessage(d, "Restore failed."));
     }
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  async function downloadBackup(filename: string) {
+    setDownloadTarget(filename);
+    setActionState("running");
+    setActionMsg(`Downloading ${filename}…`);
+    try {
+      const r = await fetch(apiPath(`/admin/system/backups/${filename}`), {
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const d = r.headers.get("content-type")?.includes("application/json")
+          ? await r.json().catch(() => ({}))
+          : {};
+        setActionState("error");
+        setActionMsg(errorMessage(d, "Download failed."));
+        return;
+      }
+
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      setActionState("ok");
+      setActionMsg(`${filename} downloaded.`);
+    } finally {
+      setDownloadTarget(null);
+    }
+  }
+
+  function startProtectedAction(action: PendingAction) {
+    setPendingAction(action);
+    setReauthError("");
+    setReauthOpen(true);
+  }
+
+  function cancelReauth() {
+    if (pendingAction?.kind === "upload" && fileRef.current) {
+      fileRef.current.value = "";
+    }
+    setPendingAction(null);
+    setReauthError("");
+    setReauthOpen(false);
+  }
+
+  async function doReauth(password: string) {
+    setReauthLoading(true);
+    setReauthError("");
+    const r = await fetch(apiPath("/auth/reauth"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": getCsrf() },
+      body: JSON.stringify({ password }),
+    });
+    if (!r.ok) {
+      setReauthError("Incorrect password");
+      setReauthLoading(false);
+      return;
+    }
+
+    const action = pendingAction;
+    setPendingAction(null);
+    setReauthOpen(false);
+    setReauthLoading(false);
+
+    if (!action) return;
+    if (action.kind === "create") await createBackup();
+    if (action.kind === "download") await downloadBackup(action.filename);
+    if (action.kind === "delete") await deleteBackup(action.filename);
+    if (action.kind === "restore") await restoreFromFile(action.filename);
+    if (action.kind === "upload") await uploadAndRestore(action.file);
+  }
+
+  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    startProtectedAction({ kind: "upload", file });
+  }
+
   return (
     <div className="p-6 space-y-6 animate-fade-in">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
@@ -135,8 +255,8 @@ export default function BackupPage() {
           </p>
         </div>
         <button
-          onClick={createBackup}
-          disabled={createState === "running"}
+          onClick={() => startProtectedAction({ kind: "create" })}
+          disabled={createState === "running" || reauthLoading}
           className="btn-primary flex items-center gap-2 px-4 py-2 text-sm"
         >
           {createState === "running" ? (
@@ -151,23 +271,21 @@ export default function BackupPage() {
         </button>
       </div>
 
-      {/* Restore status banner */}
-      {restoreState !== "idle" && restoreMsg && (
+      {actionState !== "idle" && actionMsg && (
         <div className={`flex items-start gap-3 rounded-md border px-4 py-3 text-sm ${
-          restoreState === "ok"
+          actionState === "ok"
             ? "bg-green-900/20 border-green-800/40 text-severity-low"
-            : restoreState === "error"
+            : actionState === "error"
             ? "bg-red-900/20 border-red-800/40 text-severity-high"
             : "bg-bg-elevated border-bg-border text-text-muted"
         }`}>
-          {restoreState === "running" && <Loader2 className="w-4 h-4 animate-spin flex-shrink-0 mt-0.5" />}
-          {restoreState === "ok"      && <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-          {restoreState === "error"   && <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
-          <span>{restoreMsg}</span>
+          {actionState === "running" && <Loader2 className="w-4 h-4 animate-spin flex-shrink-0 mt-0.5" />}
+          {actionState === "ok"      && <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+          {actionState === "error"   && <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+          <span>{actionMsg}</span>
         </div>
       )}
 
-      {/* Upload restore */}
       <div className="card p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -194,7 +312,6 @@ export default function BackupPage() {
         </p>
       </div>
 
-      {/* Backup list */}
       <div className="card">
         <div className="px-5 py-4 border-b border-bg-border flex items-center justify-between">
           <h2 className="font-semibold text-sm">Stored Backups</h2>
@@ -225,26 +342,26 @@ export default function BackupPage() {
                   <td className="text-xs tabular-nums">{formatBytes(b.size_bytes)}</td>
                   <td className="text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {/* Download */}
-                      <a
-                        href={apiPath(`/admin/system/backups/${b.filename}`)}
-                        download={b.filename}
+                      <button
+                        type="button"
+                        onClick={() => startProtectedAction({ kind: "download", filename: b.filename })}
                         className="btn-secondary text-xs px-3 py-1 flex items-center gap-1"
                         title="Download"
                       >
-                        <HardDriveDownload className="w-3.5 h-3.5" />
+                        {downloadTarget === b.filename
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <HardDriveDownload className="w-3.5 h-3.5" />}
                         Download
-                      </a>
+                      </button>
 
-                      {/* Restore */}
                       {confirmFile === b.filename ? (
                         <div className="flex items-center gap-1">
                           <span className="text-xs text-severity-medium mr-1">Confirm?</span>
                           <button
-                            onClick={() => restoreFromFile(b.filename)}
+                            onClick={() => startProtectedAction({ kind: "restore", filename: b.filename })}
                             className="btn-primary text-xs px-3 py-1"
                           >
-                            {restoreState === "running" ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes, restore"}
+                            {actionState === "running" ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes, restore"}
                           </button>
                           <button
                             onClick={() => setConfirmFile(null)}
@@ -264,12 +381,11 @@ export default function BackupPage() {
                         </button>
                       )}
 
-                      {/* Delete */}
                       {deleteTarget === b.filename ? (
                         <div className="flex items-center gap-1">
                           <span className="text-xs text-severity-high mr-1">Delete?</span>
                           <button
-                            onClick={() => deleteBackup(b.filename)}
+                            onClick={() => startProtectedAction({ kind: "delete", filename: b.filename })}
                             className="btn-danger text-xs px-3 py-1"
                           >
                             Yes
@@ -298,6 +414,14 @@ export default function BackupPage() {
           </table>
         )}
       </div>
+
+      <ReauthModal
+        open={reauthOpen}
+        onConfirm={doReauth}
+        onCancel={cancelReauth}
+        loading={reauthLoading}
+        error={reauthError}
+      />
     </div>
   );
 }

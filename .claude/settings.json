@@ -88,7 +88,8 @@
       "WebFetch(domain:www.splunk.com)",
       "WebFetch(domain:docs.cloud.google.com)",
       "WebFetch(domain:engineering.mercari.com)",
-      "Bash(find /home/janberkb/Downloads/otrap-v2.0/otrap/manager -name *.py)"
+      "Bash(find /home/janberkb/Downloads/otrap-v2.0/otrap/manager -name *.py)",
+      "Bash(wc -l /home/janberkb/Downloads/analiz/otrap/manager/api/*.py)"
     ],
     "additionalDirectories": [
       "/home/janberkb/Downloads/otrap-v2.0/otrap/ui/app/(operator)/attackers"

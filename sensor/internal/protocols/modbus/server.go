@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -239,9 +240,9 @@ func (s *Server) dispatch(
 		return s.buildMBAP(txID, unitID, mei)
 
 	default:
-		s.emit(sensorv1.EventType_MODBUS_UNKNOWN_FUNCTION, sensorv1.Severity_SEVERITY_MEDIUM,
+		s.emitFC(fc, sensorv1.EventType_MODBUS_UNKNOWN_FUNCTION,
 			fmt.Sprintf("Unknown Modbus function code: 0x%02X", fc),
-			remoteIP, remotePort, sessionKey, rawPacket, nil)
+			remoteIP, remotePort, sessionKey, rawPacket, data)
 		return s.buildException(txID, unitID, fc, exIllegalFunction)
 	}
 }
@@ -344,13 +345,84 @@ func (s *Server) emitFC(
 	rawPacket, data []byte,
 ) {
 	sev := fcSeverity[fc]
-	if sev == sensorv1.Severity_SEVERITY_NOISE {
+	if evType == sensorv1.EventType_MODBUS_UNKNOWN_FUNCTION {
+		sev = sensorv1.Severity_SEVERITY_MEDIUM
+	} else if sev == sensorv1.Severity_SEVERITY_NOISE {
 		sev = sensorv1.Severity_SEVERITY_LOW
 	}
-	meta := map[string]string{"function_code": fmt.Sprintf("0x%02X", fc)}
-	if len(data) >= 4 {
-		meta["start_address"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[0:2]))
-		meta["quantity"]      = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[2:4]))
+	meta := map[string]string{
+		"function_code": fmt.Sprintf("0x%02X", fc),
+		"function_name": modbusFunctionName(fc),
+	}
+	switch fc {
+	case fcReadCoils, fcReadDiscreteInputs, fcReadHoldingRegs, fcReadInputRegs:
+		if len(data) >= 2 {
+			meta["start_address"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[0:2]))
+		}
+		if len(data) >= 4 {
+			meta["quantity"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[2:4]))
+		}
+		meta["target_kind"] = modbusTargetKind(fc)
+
+	case fcWriteSingleCoil:
+		if len(data) >= 2 {
+			meta["start_address"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[0:2]))
+		}
+		if len(data) >= 4 {
+			val := binary.BigEndian.Uint16(data[2:4])
+			meta["target_kind"] = "coil"
+			meta["write_value_raw"] = fmt.Sprintf("0x%04X", val)
+			switch val {
+			case 0xFF00:
+				meta["write_value"] = "on"
+			case 0x0000:
+				meta["write_value"] = "off"
+			default:
+				meta["write_value"] = fmt.Sprintf("0x%04X", val)
+			}
+		}
+
+	case fcWriteSingleReg:
+		if len(data) >= 2 {
+			meta["start_address"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[0:2]))
+		}
+		if len(data) >= 4 {
+			val := binary.BigEndian.Uint16(data[2:4])
+			meta["target_kind"] = "holding_register"
+			meta["write_value"] = fmt.Sprintf("%d", val)
+			meta["write_value_raw"] = fmt.Sprintf("0x%04X", val)
+		}
+
+	case fcWriteMultipleCoils:
+		meta["target_kind"] = "coil"
+		if len(data) >= 2 {
+			meta["start_address"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[0:2]))
+		}
+		if len(data) >= 5 {
+			meta["quantity"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[2:4]))
+			meta["byte_count"] = fmt.Sprintf("%d", data[4])
+			if len(data) > 5 {
+				meta["write_values_preview"] = coilPreview(data[5:])
+			}
+		}
+
+	case fcWriteMultipleRegs:
+		meta["target_kind"] = "holding_register"
+		if len(data) >= 2 {
+			meta["start_address"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[0:2]))
+		}
+		if len(data) >= 5 {
+			meta["quantity"] = fmt.Sprintf("%d", binary.BigEndian.Uint16(data[2:4]))
+			meta["byte_count"] = fmt.Sprintf("%d", data[4])
+			if len(data) > 5 {
+				meta["write_values_preview"] = registerPreview(data[5:])
+			}
+		}
+
+	case fcEncapsulatedTransport:
+		if len(data) >= 1 {
+			meta["mei_type"] = fmt.Sprintf("0x%02X", data[0])
+		}
 	}
 	var artifacts []*sensorv1.Artifact
 	if sev >= sensorv1.Severity_SEVERITY_HIGH {
@@ -376,6 +448,76 @@ func (s *Server) emitFC(
 		Artifacts:   artifacts,
 		SessionHint: sessionKey,
 	})
+}
+
+func modbusFunctionName(fc byte) string {
+	switch fc {
+	case fcReadCoils:
+		return "read_coils"
+	case fcReadDiscreteInputs:
+		return "read_discrete_inputs"
+	case fcReadHoldingRegs:
+		return "read_holding_registers"
+	case fcReadInputRegs:
+		return "read_input_registers"
+	case fcWriteSingleCoil:
+		return "write_single_coil"
+	case fcWriteSingleReg:
+		return "write_single_register"
+	case fcWriteMultipleCoils:
+		return "write_multiple_coils"
+	case fcWriteMultipleRegs:
+		return "write_multiple_registers"
+	case fcEncapsulatedTransport:
+		return "encapsulated_transport"
+	default:
+		return "unknown"
+	}
+}
+
+func modbusTargetKind(fc byte) string {
+	switch fc {
+	case fcReadCoils, fcWriteSingleCoil, fcWriteMultipleCoils:
+		return "coil"
+	case fcReadDiscreteInputs:
+		return "discrete_input"
+	case fcReadHoldingRegs, fcWriteSingleReg, fcWriteMultipleRegs:
+		return "holding_register"
+	case fcReadInputRegs:
+		return "input_register"
+	default:
+		return "address"
+	}
+}
+
+func coilPreview(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(data))
+	limit := len(data)
+	if limit > 6 {
+		limit = 6
+	}
+	for _, b := range data[:limit] {
+		parts = append(parts, fmt.Sprintf("0x%02X", b))
+	}
+	return strings.Join(parts, ",")
+}
+
+func registerPreview(data []byte) string {
+	if len(data) < 2 {
+		return ""
+	}
+	parts := make([]string, 0, len(data)/2)
+	limit := len(data)
+	if limit > 8 {
+		limit = 8
+	}
+	for i := 0; i+1 < limit; i += 2 {
+		parts = append(parts, fmt.Sprintf("%d", binary.BigEndian.Uint16(data[i:i+2])))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (s *Server) emit(

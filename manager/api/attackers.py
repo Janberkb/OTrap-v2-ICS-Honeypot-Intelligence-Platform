@@ -4,7 +4,7 @@ manager/api/attackers.py — Attacker IP profile (aggregated view).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 
 from manager.db import models
@@ -12,6 +12,111 @@ from manager.db.engine import get_db
 from manager.api.auth import get_current_user
 
 router = APIRouter(prefix="/attackers", tags=["attackers"])
+
+
+def build_network_context(ip: str, geo: dict | None) -> dict:
+    from manager.utils.geoip import is_private_ip
+
+    geo = geo or {}
+    is_private = bool(geo.get("is_private")) or is_private_ip(ip)
+    if is_private:
+        summary = (
+            "This source is in private-network space. Treat activity as internal pivoting, "
+            "NATed traffic, lab validation, or a sensor-placement issue until attribution is confirmed."
+        )
+    else:
+        country = geo.get("country_name") or "an unknown country"
+        org = geo.get("org") or "an unknown network"
+        summary = f"GeoIP attributes this source to {country} via {org}."
+
+    return {
+        "scope": "internal" if is_private else "external",
+        "is_private": is_private,
+        "threat_intel_applicable": not is_private,
+        "summary": summary,
+    }
+
+
+async def fetch_attacker_ioc_page(
+    db,
+    ip: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    base = (
+        select(
+            models.IOC.ioc_type,
+            models.IOC.value,
+            func.max(models.IOC.confidence).label("confidence"),
+            func.min(models.IOC.first_seen_at).label("first_seen_at"),
+            func.max(models.IOC.last_seen_at).label("last_seen_at"),
+            func.count(models.IOC.session_id.distinct()).label("session_count"),
+        )
+        .join(models.Session, models.IOC.session_id == models.Session.id)
+        .where(models.Session.source_ip == ip)
+        .group_by(models.IOC.ioc_type, models.IOC.value)
+    )
+
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    rows = (
+        await db.execute(
+            base.order_by(
+                func.max(models.IOC.last_seen_at).desc(),
+                func.count(models.IOC.session_id.distinct()).desc(),
+                func.max(models.IOC.confidence).desc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": [
+            {
+                "ioc_type": r.ioc_type,
+                "value": r.value,
+                "confidence": round(r.confidence, 3),
+                "session_count": int(r.session_count or 0),
+                "first_seen_at": r.first_seen_at,
+                "last_seen_at": r.last_seen_at,
+            }
+            for r in rows
+        ],
+    }
+
+
+async def fetch_attacker_ioc_type_distribution(db, ip: str) -> list[dict]:
+    dedup = (
+        select(
+            models.IOC.ioc_type.label("ioc_type"),
+            models.IOC.value.label("value"),
+        )
+        .join(models.Session, models.IOC.session_id == models.Session.id)
+        .where(models.Session.source_ip == ip)
+        .group_by(models.IOC.ioc_type, models.IOC.value)
+        .subquery()
+    )
+
+    rows = await db.execute(
+        select(dedup.c.ioc_type, func.count().label("cnt"))
+        .group_by(dedup.c.ioc_type)
+        .order_by(func.count().desc(), dedup.c.ioc_type.asc())
+    )
+    return [{"ioc_type": r.ioc_type, "count": int(r.cnt)} for r in rows]
+
+
+@router.get("/{ip}/iocs")
+async def list_attacker_iocs(
+    ip: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> dict:
+    return await fetch_attacker_ioc_page(db, ip, limit=limit, offset=offset)
 
 
 @router.get("/{ip}")
@@ -62,6 +167,8 @@ async def get_attacker_profile(
         .order_by(func.count(models.Session.id).desc())
     )
     phases = [r.attack_phase for r in phase_rows if r.attack_phase]
+    ioc_type_dist = await fetch_attacker_ioc_type_distribution(db, ip)
+    ioc_page = await fetch_attacker_ioc_page(db, ip, limit=10, offset=0)
 
     # GeoIP + Threat Intelligence (run concurrently)
     from manager.utils.geoip import lookup
@@ -73,18 +180,22 @@ async def get_attacker_profile(
         lookup(ip, redis),
         lookup_threat_intel(ip, redis),
     )
+    network_context = build_network_context(ip, geo)
 
     return {
         "ip":             ip,
         "geo":            geo,
         "threat_intel":   threat_intel,
+        "network_context": network_context,
         "session_count":  int(row.session_count or 0),
         "event_count":    int(row.event_count or 0),
         "ioc_count":      int(row.ioc_count or 0),
+        "distinct_ioc_count": int(ioc_page["total"]),
         "first_seen":     row.first_seen,
         "last_seen":      row.last_seen,
         "cpu_stop_ever":  bool(row.cpu_stop_ever),
         "severity_dist":  severity_dist,
         "protocol_dist":  protocol_dist,
         "attack_phases":  phases,
+        "ioc_type_dist":  ioc_type_dist,
     }

@@ -23,6 +23,7 @@ def extract_iocs(ev: dict[str, Any]) -> list[dict[str, Any]]:
     - sql_payload: SQLi payloads
     - path_probe:  Path traversal targets
     - url_path:    Accessed URL paths (for HMI scanner detection)
+    - modbus_*:    Function/target/write values extracted from Modbus metadata
     """
     iocs = []
     event_type = ev.get("event_type", "")
@@ -115,6 +116,50 @@ def extract_iocs(ev: dict[str, Any]) -> list[dict[str, Any]]:
             "context":    f"HTTP User-Agent observed from {source_ip}",
             "confidence": 0.75,
         })
+
+    # Extract Modbus protocol-level IOCs for read/write targeting and writes
+    if event_type.startswith("MODBUS_"):
+        function_code = metadata.get("function_code", "")
+        target_kind = metadata.get("target_kind", "")
+        start_address = metadata.get("start_address", "")
+        quantity = metadata.get("quantity", "")
+        write_value = metadata.get("write_value", "")
+        write_values = metadata.get("write_values_preview", "")
+
+        if function_code:
+            iocs.append({
+                "type":       "modbus_function",
+                "value":      function_code[:16],
+                "context":    f"Modbus function code observed in {event_type} from {source_ip}",
+                "confidence": 0.92,
+            })
+
+        if start_address and target_kind:
+            target_value = f"{target_kind or 'address'}:{start_address}"
+            if quantity:
+                target_value = f"{target_value}:{quantity}"
+            iocs.append({
+                "type":       "modbus_target",
+                "value":      target_value[:128],
+                "context":    f"Modbus {target_kind or 'data'} target observed in {event_type} from {source_ip}",
+                "confidence": 0.9,
+            })
+
+        if write_value:
+            iocs.append({
+                "type":       "modbus_write_value",
+                "value":      write_value[:128],
+                "context":    f"Modbus write value observed in {event_type} from {source_ip}",
+                "confidence": 0.94,
+            })
+
+        if write_values:
+            iocs.append({
+                "type":       "modbus_write_values",
+                "value":      write_values[:256],
+                "context":    f"Modbus multi-write values observed in {event_type} from {source_ip}",
+                "confidence": 0.93,
+            })
 
     # Extract HTTP Host header as domain IOC — C2 domain discovery
     host = metadata.get("host", "")

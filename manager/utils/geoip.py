@@ -58,6 +58,19 @@ def _country_flag(code: str) -> str:
     )
 
 
+def _private_geo(ip: str) -> dict:
+    """Return a stable pseudo-GeoIP record for RFC1918/loopback sources."""
+    return {
+        "country_code": "PRIVATE",
+        "country_name": "Private Network",
+        "city": "",
+        "org": "RFC1918 / Loopback",
+        "flag": "🔒",
+        "is_private": True,
+        "ip": ip,
+    }
+
+
 @lru_cache(maxsize=1)
 def _city_reader():
     """Lazy-load the City database reader (cached for process lifetime)."""
@@ -116,10 +129,11 @@ async def lookup(ip: str, redis) -> dict:
     """Return GeoIP dict for *ip*, using Redis cache.
 
     Keys: country_code, country_name, city, org, flag
-    Returns {} for private IPs or if databases are unavailable.
+    Returns a stable "Private Network" pseudo-record for private IPs, or {}
+    if databases are unavailable for public IPs.
     """
     if _is_private(ip):
-        return {}
+        return _private_geo(ip)
 
     cache_key = f"geoip:{ip}"
     try:
@@ -143,7 +157,7 @@ async def lookup(ip: str, redis) -> dict:
 async def lookup_many(ips: list[str], redis) -> dict[str, dict]:
     """Batch GeoIP lookup for a list of IPs. Returns {ip: geo_dict}."""
     import asyncio
-    unique = list(dict.fromkeys(ip for ip in ips if not _is_private(ip)))
+    unique = list(dict.fromkeys(ip for ip in ips if ip))
     if not unique:
         return {}
     results = await asyncio.gather(*(lookup(ip, redis) for ip in unique))

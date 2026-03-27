@@ -17,6 +17,20 @@ const SEV_COLOR: Record<string, string> = {
   low:      "text-severity-low",
   noise:    "text-text-faint",
 };
+const IOC_BADGE: Record<string, string> = {
+  ip: "badge-critical",
+  user_agent: "badge-medium",
+  username: "badge-high",
+  password: "badge-high",
+  sql_payload: "badge-critical",
+  path_probe: "badge-medium",
+  url_path: "badge-low",
+  s7_payload: "badge-critical",
+  modbus_function: "badge-medium",
+  modbus_target: "badge-high",
+  modbus_write_value: "badge-critical",
+  modbus_write_values: "badge-critical",
+};
 
 export default function AttackerProfilePage() {
   const { ip }  = useParams<{ ip: string }>();
@@ -41,7 +55,7 @@ export default function AttackerProfilePage() {
     Promise.all([
       fetch(apiPath(`/attackers/${encodeURIComponent(decodedIp)}`), { credentials: "include" }).then((r) => r.ok ? r.json() : null),
       fetch(apiPath(`/sessions?source_ip=${encodeURIComponent(decodedIp)}&limit=20&sort_by=started_at&sort_dir=desc`), { credentials: "include" }).then((r) => r.ok ? r.json() : null),
-      fetch(apiPath(`/iocs?search=${encodeURIComponent(decodedIp)}&ioc_type=ip`), { credentials: "include" }).then((r) => r.ok ? r.json() : null),
+      fetch(apiPath(`/attackers/${encodeURIComponent(decodedIp)}/iocs?limit=50`), { credentials: "include" }).then((r) => r.ok ? r.json() : null),
     ]).then(([prof, sess, iocData]) => {
       if (prof)     setProfile(prof);
       if (sess)     setSessions(sess.items ?? []);
@@ -134,8 +148,14 @@ export default function AttackerProfilePage() {
   const ti       = profile.threat_intel ?? {};
   const gn       = ti.greynoise ?? null;
   const ab       = ti.abuseipdb ?? null;
+  const networkContext = profile.network_context ?? {};
+  const isPrivateSource = Boolean(networkContext.is_private ?? geo.is_private);
   const topSev   = SEVERITY_ORDER.find((s) => (profile.severity_dist?.[s] ?? 0) > 0);
   const totalSevCount = Object.values(profile.severity_dist ?? {}).reduce((a: number, b) => a + (b as number), 0);
+  const distinctIocCount = profile.distinct_ioc_count ?? iocs.length;
+  const displayedIocs = iocs.filter((ioc) => ioc.ioc_type !== "ip");
+  const relatedIocs = displayedIocs.length > 0 ? displayedIocs : iocs;
+  const iocTypeDist = (profile.ioc_type_dist ?? []).filter((row: any) => row.ioc_type !== "ip");
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
@@ -153,6 +173,11 @@ export default function AttackerProfilePage() {
               {geo.org && <span className="ml-2 text-text-faint">· {geo.org}</span>}
             </p>
           </div>
+          {isPrivateSource && (
+            <span className="flex items-center gap-1 text-accent text-xs font-semibold bg-accent/10 border border-accent/20 px-2 py-1 rounded">
+              <Network className="w-3 h-3" />Internal Source
+            </span>
+          )}
           {profile.cpu_stop_ever && (
             <span className="flex items-center gap-1 text-severity-critical text-xs font-semibold bg-severity-critical/10 border border-severity-critical/30 px-2 py-1 rounded">
               <Zap className="w-3 h-3" />CPU STOP
@@ -166,7 +191,7 @@ export default function AttackerProfilePage() {
         {[
           { label: "Sessions",   value: profile.session_count,  icon: Shield,        color: "text-accent" },
           { label: "Events",     value: profile.event_count,    icon: Activity,      color: "text-severity-medium" },
-          { label: "IOCs",       value: profile.ioc_count,      icon: AlertTriangle, color: "text-severity-high" },
+          { label: "Distinct IOCs", value: distinctIocCount,    icon: AlertTriangle, color: "text-severity-high" },
           { label: "First Seen", value: formatDateTime(profile.first_seen), icon: Clock, color: "text-text-muted" },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="kpi-card">
@@ -198,6 +223,54 @@ export default function AttackerProfilePage() {
                 </div>
               </div>
             ) : null)}
+          </div>
+
+          <div className="card p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Network className="w-4 h-4 text-accent" />
+              <h2 className="font-semibold text-sm text-text-primary">Network Context</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded border ${
+                isPrivateSource
+                  ? "bg-accent/10 text-accent border-accent/20"
+                  : "bg-bg-elevated text-text-muted border-bg-border"
+              }`}>
+                {isPrivateSource ? "Internal / Private Source" : "External / Routed Source"}
+              </span>
+              {topSev && (
+                <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded bg-bg-elevated border border-bg-border ${SEV_COLOR[topSev]}`}>
+                  Top severity: {topSev}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-text-muted leading-relaxed">
+              {networkContext.summary ?? "No network context available."}
+            </p>
+            {profile.attack_phases?.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-text-faint font-medium uppercase tracking-wider">Observed Phases</p>
+                <div className="flex flex-wrap gap-2">
+                  {profile.attack_phases.map((phase: string) => (
+                    <span key={phase} className="text-xs px-2 py-1 rounded bg-bg-elevated text-text-muted border border-bg-border capitalize">
+                      {phase.replace(/_/g, " ")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {iocTypeDist.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs text-text-faint font-medium uppercase tracking-wider">Observed IOC Types</p>
+                <div className="flex flex-wrap gap-2">
+                  {iocTypeDist.map((row: any) => (
+                    <span key={row.ioc_type} className="text-xs px-2 py-1 rounded bg-bg-elevated text-text-muted border border-bg-border font-mono">
+                      {row.ioc_type} <span className="text-text-faint">×{row.count}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Severity distribution */}
@@ -243,7 +316,7 @@ export default function AttackerProfilePage() {
           )}
 
           {/* Threat Intelligence */}
-          {(gn !== null || ab !== null) && (
+          {!isPrivateSource && (gn !== null || ab !== null) && (
             <div className="card p-4 space-y-3">
               <h2 className="font-semibold text-sm text-text-primary">Threat Intelligence</h2>
 
@@ -320,8 +393,18 @@ export default function AttackerProfilePage() {
             </div>
           )}
 
+          {isPrivateSource && (
+            <div className="card p-4 border-dashed">
+              <h2 className="font-semibold text-sm text-text-primary mb-1">Threat Intelligence</h2>
+              <p className="text-xs text-text-faint leading-relaxed">
+                External threat-intel services are not applicable to RFC1918 or loopback sources. Correlate this activity with jump hosts,
+                NAT boundaries, site routing, and internal asset telemetry instead.
+              </p>
+            </div>
+          )}
+
           {/* No API keys configured hint */}
-          {gn === null && ab === null && (
+          {!isPrivateSource && gn === null && ab === null && (
             <div className="card p-4 border-dashed">
               <h2 className="font-semibold text-sm text-text-faint mb-1">Threat Intelligence</h2>
               <p className="text-xs text-text-faint">
@@ -379,23 +462,39 @@ export default function AttackerProfilePage() {
             )}
           </div>
 
-          {/* IOCs */}
-          {iocs.length > 0 && (
+          {/* Related IOCs */}
+          {relatedIocs.length > 0 && (
             <div className="card overflow-hidden">
-              <div className="px-4 py-3 border-b border-bg-border">
-                <h2 className="font-semibold text-sm text-text-primary">IOCs</h2>
+              <div className="px-4 py-3 border-b border-bg-border flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold text-sm text-text-primary">Related IOCs</h2>
+                  <p className="text-xs text-text-faint mt-1">
+                    Showing {relatedIocs.length} deduplicated indicators linked to {profile.session_count} session{profile.session_count !== 1 ? "s" : ""}.
+                  </p>
+                </div>
+                <button
+                  onClick={() => router.push(`/sessions?source_ip=${encodeURIComponent(decodedIp)}&has_iocs=true`)}
+                  className="text-xs text-accent hover:underline whitespace-nowrap"
+                >
+                  View IOC sessions →
+                </button>
               </div>
               <table className="data-table">
                 <thead>
-                  <tr><th>Type</th><th>Value</th><th>Confidence</th><th>Sessions</th><th>Last Seen</th></tr>
+                  <tr><th>Type</th><th>Value</th><th>Confidence</th><th>Sessions</th><th>First Seen</th><th>Last Seen</th></tr>
                 </thead>
                 <tbody>
-                  {iocs.map((ioc, i) => (
-                    <tr key={i}>
-                      <td className="text-xs uppercase font-mono text-text-muted">{ioc.ioc_type}</td>
-                      <td className="text-xs font-mono">{ioc.value}</td>
+                  {relatedIocs.map((ioc, i) => (
+                    <tr key={i} className="cursor-pointer" onClick={() => router.push(`/iocs?search=${encodeURIComponent(ioc.value)}`)}>
+                      <td>
+                        <span className={IOC_BADGE[ioc.ioc_type] ?? "badge-noise"}>
+                          {ioc.ioc_type}
+                        </span>
+                      </td>
+                      <td className="text-xs font-mono max-w-sm truncate" title={ioc.value}>{ioc.value}</td>
                       <td className="text-xs tabular-nums">{Math.round((ioc.confidence ?? 0) * 100)}%</td>
                       <td className="text-xs tabular-nums">{ioc.session_count}</td>
+                      <td className="text-xs text-text-muted whitespace-nowrap">{formatDateTime(ioc.first_seen_at)}</td>
                       <td className="text-xs text-text-muted whitespace-nowrap">{formatDateTime(ioc.last_seen_at)}</td>
                     </tr>
                   ))}

@@ -15,12 +15,18 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 
-from manager.api.auth import require_admin
+from manager.api.auth import require_admin, require_reauth
+from manager.db.engine import get_db
+from manager.security.audit import write_audit
 
 router = APIRouter(prefix="/system", tags=["admin-system"])
 
 BACKUP_DIR = pathlib.Path("/app/backups")
 _SAFE_NAME = re.compile(r"^otrap_\d{8}_\d{6}\.sql\.gz$")
+
+
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
 
 
 def _pg_env(request: Request) -> dict:
@@ -117,28 +123,51 @@ async def list_backups(
 @router.post("/backups", status_code=status.HTTP_202_ACCEPTED)
 async def create_backup(
     request: Request,
-    user=Depends(require_admin),
+    db=Depends(get_db),
+    user=Depends(require_reauth),
 ) -> dict:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     output_path = BACKUP_DIR / f"otrap_{timestamp}.sql.gz"
     env = _pg_env(request)
 
-    proc = await asyncio.create_subprocess_exec(
-        "pg_dump", "-Fp", "--no-password",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"pg_dump failed: {stderr.decode(errors='replace')[:500]}",
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pg_dump", "-Fp", "--no-password",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"pg_dump failed: {stderr.decode(errors='replace')[:500]}",
+            )
 
-    with gzip.open(output_path, "wb") as f:
-        f.write(stdout)
+        with gzip.open(output_path, "wb") as f:
+            f.write(stdout)
+
+        await write_audit(
+            db,
+            user,
+            "create_backup",
+            target_type="backup",
+            target_id=output_path.name,
+            detail={"result": "success", "size_bytes": output_path.stat().st_size},
+            source_ip=_client_ip(request),
+        )
+    except HTTPException as exc:
+        await write_audit(
+            db,
+            user,
+            "create_backup",
+            target_type="backup",
+            target_id=output_path.name,
+            detail={"result": "failed", "error": exc.detail},
+            source_ip=_client_ip(request),
+        )
+        raise
 
     return {
         "filename": output_path.name,
@@ -151,13 +180,36 @@ async def create_backup(
 async def download_backup(
     filename: str,
     request: Request,
-    user=Depends(require_admin),
+    db=Depends(get_db),
+    user=Depends(require_reauth),
 ):
-    if not _SAFE_NAME.match(filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    path = BACKUP_DIR / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Backup not found")
+    try:
+        if not _SAFE_NAME.match(filename):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        path = BACKUP_DIR / filename
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Backup not found")
+
+        await write_audit(
+            db,
+            user,
+            "download_backup",
+            target_type="backup",
+            target_id=filename,
+            detail={"result": "success", "size_bytes": path.stat().st_size},
+            source_ip=_client_ip(request),
+        )
+    except HTTPException as exc:
+        await write_audit(
+            db,
+            user,
+            "download_backup",
+            target_type="backup",
+            target_id=filename,
+            detail={"result": "failed", "error": exc.detail},
+            source_ip=_client_ip(request),
+        )
+        raise
     return FileResponse(
         path=str(path),
         media_type="application/gzip",
@@ -169,44 +221,121 @@ async def download_backup(
 async def delete_backup(
     filename: str,
     request: Request,
-    user=Depends(require_admin),
+    db=Depends(get_db),
+    user=Depends(require_reauth),
 ):
-    if not _SAFE_NAME.match(filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    path = BACKUP_DIR / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Backup not found")
-    path.unlink()
+    try:
+        if not _SAFE_NAME.match(filename):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        path = BACKUP_DIR / filename
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Backup not found")
+        path.unlink()
+        await write_audit(
+            db,
+            user,
+            "delete_backup",
+            target_type="backup",
+            target_id=filename,
+            detail={"result": "success"},
+            source_ip=_client_ip(request),
+        )
+    except HTTPException as exc:
+        await write_audit(
+            db,
+            user,
+            "delete_backup",
+            target_type="backup",
+            target_id=filename,
+            detail={"result": "failed", "error": exc.detail},
+            source_ip=_client_ip(request),
+        )
+        raise
 
 
 @router.post("/backups/{filename}/restore", status_code=status.HTTP_202_ACCEPTED)
 async def restore_backup(
     filename: str,
     request: Request,
-    user=Depends(require_admin),
+    db=Depends(get_db),
+    user=Depends(require_reauth),
 ) -> dict:
-    if not _SAFE_NAME.match(filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    path = BACKUP_DIR / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Backup not found")
-    return await _do_restore(request, path)
+    try:
+        if not _SAFE_NAME.match(filename):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        path = BACKUP_DIR / filename
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Backup not found")
+        result = await _do_restore(request, path)
+        await write_audit(
+            db,
+            user,
+            "restore_backup",
+            target_type="backup",
+            target_id=filename,
+            detail={"result": "success", "source": "stored_backup"},
+            source_ip=_client_ip(request),
+        )
+        return result
+    except HTTPException as exc:
+        await write_audit(
+            db,
+            user,
+            "restore_backup",
+            target_type="backup",
+            target_id=filename,
+            detail={"result": "failed", "source": "stored_backup", "error": exc.detail},
+            source_ip=_client_ip(request),
+        )
+        raise
 
 
 @router.post("/restore/upload", status_code=status.HTTP_202_ACCEPTED)
 async def restore_from_upload(
     file: UploadFile,
     request: Request,
-    user=Depends(require_admin),
+    db=Depends(get_db),
+    user=Depends(require_reauth),
 ) -> dict:
-    if not file.filename or not file.filename.endswith(".sql.gz"):
-        raise HTTPException(status_code=400, detail="File must be a .sql.gz backup")
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     dest = BACKUP_DIR / f"otrap_{timestamp}.sql.gz"
-    content = await file.read()
-    dest.write_bytes(content)
-    return await _do_restore(request, dest)
+    try:
+        if not file.filename or not file.filename.endswith(".sql.gz"):
+            raise HTTPException(status_code=400, detail="File must be a .sql.gz backup")
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        content = await file.read()
+        dest.write_bytes(content)
+        result = await _do_restore(request, dest)
+        await write_audit(
+            db,
+            user,
+            "restore_backup_upload",
+            target_type="backup",
+            target_id=dest.name,
+            detail={
+                "result": "success",
+                "source": "uploaded_backup",
+                "uploaded_filename": file.filename,
+            },
+            source_ip=_client_ip(request),
+        )
+        return result
+    except HTTPException as exc:
+        await write_audit(
+            db,
+            user,
+            "restore_backup_upload",
+            target_type="backup",
+            target_id=dest.name,
+            detail={
+                "result": "failed",
+                "source": "uploaded_backup",
+                "uploaded_filename": file.filename,
+                "error": exc.detail,
+            },
+            source_ip=_client_ip(request),
+        )
+        raise
 
 
 async def _do_restore(request: Request, path: pathlib.Path) -> dict:

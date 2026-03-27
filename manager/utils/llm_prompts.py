@@ -229,6 +229,8 @@ def build_attacker_prompt(
     geo_str = " / ".join(p for p in [
         geo.get("flag", ""), geo.get("country_name", ""), geo.get("city", ""), geo.get("org", "")
     ] if p)
+    network_context = profile.get("network_context") or {}
+    ioc_type_dist = profile.get("ioc_type_dist") or []
 
     lines: list[str] = [
         f"## Attacker IP: {ip}",
@@ -241,7 +243,8 @@ def build_attacker_prompt(
         f"total_reports={ab.get('total_reports', 0)}, whitelisted={ab.get('is_whitelisted', False)}",
         "",
         "## Attack History Summary",
-        f"Sessions: {profile.get('session_count', 0)} | Events: {profile.get('event_count', 0)} | IOCs: {profile.get('ioc_count', 0)}",
+        f"Sessions: {profile.get('session_count', 0)} | Events: {profile.get('event_count', 0)} | "
+        f"Observed IOCs: {profile.get('ioc_count', 0)} | Distinct IOCs: {profile.get('distinct_ioc_count', profile.get('ioc_count', 0))}",
         f"First seen: {(profile.get('first_seen') or 'N/A')[:16]} | Last seen: {(profile.get('last_seen') or 'N/A')[:16]}",
         f"CPU STOP ever issued: {'YES ⚠️' if profile.get('cpu_stop_ever') else 'No'}",
         f"Severity distribution: {profile.get('severity_dist', {})}",
@@ -249,6 +252,25 @@ def build_attacker_prompt(
         f"Kill-chain phases reached: {profile.get('attack_phases', [])}",
         "",
     ]
+
+    if network_context:
+        lines.extend([
+            "## Network Context",
+            f"Scope: {network_context.get('scope', 'unknown')}",
+            f"Threat intel applicable: {network_context.get('threat_intel_applicable', False)}",
+            f"Summary: {network_context.get('summary', 'N/A')}",
+            "",
+        ])
+
+    if ioc_type_dist:
+        ioc_type_summary = [
+            f"{row.get('ioc_type')}×{row.get('count')}"
+            for row in ioc_type_dist
+        ]
+        lines.append(
+            f"IOC type distribution: {ioc_type_summary}"
+        )
+        lines.append("")
 
     if sessions:
         lines.append(f"## Session History (last {len(sessions)})")

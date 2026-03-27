@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiPath } from "@/lib/api";
 import { BrandMark } from "@/components/brand-mark";
@@ -16,6 +16,21 @@ export default function LoginPage() {
   const [view,     setView]     = useState<View>("login");
   const [fgUser,   setFgUser]   = useState("");
   const [fgLoading,setFgLoading]= useState(false);
+  const [csrf,     setCsrf]     = useState("");
+
+  useEffect(() => {
+    void ensureCsrfToken();
+  }, []);
+
+  async function ensureCsrfToken() {
+    if (csrf) return csrf;
+    const res = await fetch(apiPath("/auth/csrf-token"), { credentials: "include" });
+    if (!res.ok) throw new Error("CSRF token request failed");
+    const data = await res.json().catch(() => ({}));
+    const token = data?.csrf_token ?? "";
+    setCsrf(token);
+    return token;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,10 +38,11 @@ export default function LoginPage() {
     setError("");
 
     try {
+      const csrfToken = await ensureCsrfToken();
       const res = await fetch(apiPath("/auth/login"), {
         method:      "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ username, password }),
       });
 
@@ -50,16 +66,17 @@ export default function LoginPage() {
     e.preventDefault();
     setFgLoading(true);
     try {
+      const csrfToken = await ensureCsrfToken();
       const res = await fetch(apiPath("/auth/forgot-password"), {
         method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify({ username: fgUser }),
       });
       const d = await res.json().catch(() => ({}));
       if (d?.smtp_required) { setView("forgot_no_smtp"); }
       else { setView("forgot_sent"); }
     } catch {
-      setView("forgot_sent"); // Don't reveal errors
+      setView("forgot_sent");
     } finally {
       setFgLoading(false);
     }

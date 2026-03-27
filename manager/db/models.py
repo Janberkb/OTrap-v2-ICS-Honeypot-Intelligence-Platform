@@ -338,7 +338,21 @@ class Event(Base):
             text("""
                 SELECT source_ip,
                        COUNT(*)                      AS event_count,
-                       MAX(severity)                 AS max_severity,
+                       CASE MAX(
+                           CASE severity
+                               WHEN 'critical' THEN 4
+                               WHEN 'high' THEN 3
+                               WHEN 'medium' THEN 2
+                               WHEN 'low' THEN 1
+                               ELSE 0
+                           END
+                       )
+                           WHEN 4 THEN 'critical'
+                           WHEN 3 THEN 'high'
+                           WHEN 2 THEN 'medium'
+                           WHEN 1 THEN 'low'
+                           ELSE 'noise'
+                       END                           AS max_severity,
                        COUNT(DISTINCT session_id)    AS session_count,
                        BOOL_OR(event_type = 'S7_CPU_STOP') AS cpu_stop_ever,
                        MAX(timestamp)                AS last_seen

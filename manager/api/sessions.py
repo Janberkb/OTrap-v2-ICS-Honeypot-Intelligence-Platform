@@ -17,15 +17,6 @@ from manager.db import models
 from manager.db.engine import get_db
 from manager.api.auth import get_current_user
 from manager.security.audit import write_audit
-from manager.analyzer.mitre_ics import MITRE_ICS_MAPPING
-
-# technique_id → description (first match wins when multiple events share a technique)
-_MITRE_DESC: dict[str, str] = {}
-for _entry in MITRE_ICS_MAPPING.values():
-    _tid = _entry.get("technique_id", "")
-    if _tid and _tid not in _MITRE_DESC:
-        _MITRE_DESC[_tid] = _entry.get("description", "")
-
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 _VALID_TRIAGE = {"new", "investigating", "reviewed", "false_positive", "escalated"}
@@ -477,7 +468,7 @@ def _session_summary(s: models.Session) -> dict:
         "updated_at":         s.updated_at,
         "triage_status":      getattr(s, "triage_status", None) or "new",
         "mitre_techniques":   [
-            {**t, "description": _MITRE_DESC.get(t.get("technique_id", ""), "")}
+            {**t}
             for t in (s.mitre_techniques or [])
         ],
     }

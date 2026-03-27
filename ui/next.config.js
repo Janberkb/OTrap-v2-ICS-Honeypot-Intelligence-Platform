@@ -1,6 +1,3 @@
-const createNextIntlPlugin = require("next-intl/plugin");
-const withNextIntl = createNextIntlPlugin("./i18n.ts");
-
 const internalApiBase = process.env.INTERNAL_API_BASE ?? "http://manager:8080";
 
 /** @type {import('next').NextConfig} */
@@ -8,7 +5,9 @@ const nextConfig = {
   output: "standalone",
 
   // Prevent @react-pdf/renderer from being bundled server-side (it's client-only)
-  serverExternalPackages: ["@react-pdf/renderer"],
+  experimental: {
+    serverComponentsExternalPackages: ["@react-pdf/renderer"],
+  },
 
   webpack: (config) => {
     // canvas is an optional peer dep of @react-pdf/renderer; not needed in browser
@@ -43,4 +42,4 @@ const nextConfig = {
   },
 };
 
-module.exports = withNextIntl(nextConfig);
+module.exports = nextConfig;

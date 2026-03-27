@@ -45,8 +45,8 @@ async function main() {
     await page.getByLabel("Password").fill(password);
     await submit.click();
 
-    await page.waitForURL(/\/dashboard(?:\?.*)?$/, { timeout: 15000 });
-    await page.getByText("Operator Dashboard").waitFor({ timeout: 15000 });
+    await page.waitForURL(/\/(admin|dashboard)(?:\?.*)?$/, { timeout: 15000 });
+    await page.getByRole("button", { name: /log out/i }).waitFor({ timeout: 15000 });
 
     await page.goto(`${baseUrl}/sensors`, { waitUntil: "domcontentloaded" });
     await page.getByRole("heading", { name: "Sensors" }).waitFor({ timeout: 15000 });
@@ -57,8 +57,7 @@ async function main() {
     await page.getByRole("button", { name: /^Generate$/ }).click();
 
     await page.getByText("Sensor Onboarding Ready").waitFor({ timeout: 15000 });
-    await page.getByText("Remote Docker Run Command").waitFor({ timeout: 15000 });
-    await page.getByText("docker run -d").waitFor({ timeout: 15000 });
+    await page.getByText("Install Command", { exact: true }).waitFor({ timeout: 15000 });
 
     console.log("UI login + sensor onboarding smoke passed");
   } catch (error) {

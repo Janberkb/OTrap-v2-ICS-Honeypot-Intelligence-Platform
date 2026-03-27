@@ -137,10 +137,6 @@ export default function SessionDetailPage() {
     setTriageSaving(false);
   }
 
-  if (loading) return <div className="flex items-center justify-center h-64 text-text-muted">Loading session…</div>;
-
-  if (!session) return <div className="p-6 text-severity-high">Session not found</div>;
-
   // Load AI models + past analyses when AI tab is first opened
   useEffect(() => {
     if (tab !== "ai" || !id) return;
@@ -158,6 +154,10 @@ export default function SessionDetailPage() {
       .then((r) => r.ok ? r.json() : { items: [] })
       .then((d) => setPastAnalyses(d.items ?? []));
   }, [tab, id]);
+
+  if (loading) return <div className="flex items-center justify-center h-64 text-text-muted">Loading session…</div>;
+
+  if (!session) return <div className="p-6 text-severity-high">Session not found</div>;
 
   async function startAnalysis() {
     if (isStreaming || !id) return;

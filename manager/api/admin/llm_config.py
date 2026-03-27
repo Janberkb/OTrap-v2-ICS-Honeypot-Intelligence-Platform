@@ -10,12 +10,13 @@ Endpoints:
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from manager.api.auth import require_admin
-from manager.db.engine import get_db
 from manager.db import models
+from manager.db.engine import get_db
+from manager.api.auth import require_admin, require_reauth
+from manager.security.audit import write_audit
 
 router = APIRouter(prefix="/llm-config", tags=["admin-llm"])
 
@@ -73,14 +74,13 @@ async def update_llm_config(
     body: LLMConfigUpdate,
     request: Request,
     db=Depends(get_db),
-    user=Depends(require_admin),
+    user=Depends(require_reauth),
 ) -> dict:
     update_kwargs: dict = {}
     if body.llm_enabled is not None:
         update_kwargs["llm_enabled"] = body.llm_enabled
     if body.llm_backend is not None:
         if body.llm_backend not in ("ollama", "lmstudio"):
-            from fastapi import HTTPException
             raise HTTPException(400, {"error": "llm_backend must be 'ollama' or 'lmstudio'"})
         update_kwargs["llm_backend"] = body.llm_backend
     if body.llm_base_url is not None:
@@ -92,6 +92,21 @@ async def update_llm_config(
     await db.commit()
 
     _apply_to_settings(request, cfg)
+    await write_audit(
+        db,
+        user,
+        "update_llm_config",
+        target_type="config",
+        target_id="llm",
+        detail={
+            "updated": list(update_kwargs.keys()),
+            "llm_enabled": cfg.llm_enabled,
+            "llm_backend": cfg.llm_backend,
+            "llm_base_url": cfg.llm_base_url,
+            "llm_default_model": cfg.llm_default_model,
+        },
+        source_ip=request.client.host if request.client else None,
+    )
 
     return {"ok": True, "updated": list(update_kwargs.keys())}
 
@@ -99,6 +114,8 @@ async def update_llm_config(
 @router.post("/test")
 async def test_llm_connection(
     body: LLMTestRequest,
+    request: Request,
+    db=Depends(get_db),
     user=Depends(require_admin),
 ) -> dict:
     """Probe the given base URL to check if an LLM backend is reachable."""
@@ -120,7 +137,51 @@ async def test_llm_connection(
                 models_list = sorted(m["id"] for m in data.get("data", []))
             else:
                 models_list = sorted(m.get("name", "") for m in data.get("models", []))
+            await write_audit(
+                db,
+                user,
+                "test_llm_connection",
+                target_type="config",
+                target_id="llm",
+                detail={
+                    "result": "success",
+                    "backend": body.backend,
+                    "base_url": base,
+                    "status_code": r.status_code,
+                    "models_count": len(models_list),
+                },
+                source_ip=request.client.host if request.client else None,
+            )
             return {"ok": True, "status_code": r.status_code, "models": models_list}
+        await write_audit(
+            db,
+            user,
+            "test_llm_connection",
+            target_type="config",
+            target_id="llm",
+            detail={
+                "result": "failed",
+                "backend": body.backend,
+                "base_url": base,
+                "status_code": r.status_code,
+                "detail": r.text[:200],
+            },
+            source_ip=request.client.host if request.client else None,
+        )
         return {"ok": False, "status_code": r.status_code, "detail": r.text[:200]}
     except Exception as e:
+        await write_audit(
+            db,
+            user,
+            "test_llm_connection",
+            target_type="config",
+            target_id="llm",
+            detail={
+                "result": "failed",
+                "backend": body.backend,
+                "base_url": base,
+                "detail": str(e),
+            },
+            source_ip=request.client.host if request.client else None,
+        )
         return {"ok": False, "status_code": None, "detail": str(e)}

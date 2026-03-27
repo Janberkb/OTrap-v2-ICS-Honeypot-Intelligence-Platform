@@ -271,35 +271,38 @@ async def analyze_attacker(
         for s in recent_q.scalars().all()
     ]
 
-    # IOCs linked to this IP (across all sessions)
-    ioc_q = await db.execute(
-        select(models.IOC.ioc_type, models.IOC.value)
-        .join(models.Session, models.IOC.session_id == models.Session.id)
-        .where(models.Session.source_ip == ip)
-        .limit(20)
-    )
-    all_iocs = [{"ioc_type": r.ioc_type, "value": r.value} for r in ioc_q]
-
     # Geo + threat intel (concurrent)
     from manager.utils.geoip import lookup
     from manager.utils.threat_intel import lookup_threat_intel
+    from manager.api.attackers import (
+        build_network_context,
+        fetch_attacker_ioc_page,
+        fetch_attacker_ioc_type_distribution,
+    )
 
     redis = request.app.state.redis
     geo, threat_intel = await asyncio.gather(
         lookup(ip, redis),
         lookup_threat_intel(ip, redis),
     )
+    network_context = build_network_context(ip, geo)
+    ioc_page = await fetch_attacker_ioc_page(db, ip, limit=20, offset=0)
+    ioc_type_dist = await fetch_attacker_ioc_type_distribution(db, ip)
+    all_iocs = [{"ioc_type": r["ioc_type"], "value": r["value"]} for r in ioc_page["items"]]
 
     profile = {
         "session_count": int(row.session_count or 0),
         "event_count":   int(row.event_count or 0),
         "ioc_count":     int(row.ioc_count or 0),
+        "distinct_ioc_count": int(ioc_page["total"]),
         "first_seen":    row.first_seen,
         "last_seen":     row.last_seen,
         "cpu_stop_ever": bool(row.cpu_stop_ever),
         "severity_dist": severity_dist,
         "protocol_dist": protocol_dist,
         "attack_phases": phases,
+        "network_context": network_context,
+        "ioc_type_dist": ioc_type_dist,
     }
 
     from manager.utils.llm_prompts import build_attacker_prompt

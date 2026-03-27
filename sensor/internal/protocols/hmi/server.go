@@ -58,6 +58,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("0.0.0.0:%d", s.cfg.HMIHTTPPort),
 		Handler:      mux,
+		ConnState:    s.connStateHook(s.cfg.HMIHTTPPort),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -80,6 +81,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			Addr:         fmt.Sprintf("0.0.0.0:%d", s.cfg.HMIHTTPSPort),
 			Handler:      mux,
 			TLSConfig:    tlsCfg,
+			ConnState:    s.connStateHook(s.cfg.HMIHTTPSPort),
 			ReadTimeout:  15 * time.Second,
 			WriteTimeout: 15 * time.Second,
 		}
@@ -98,6 +100,17 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		return nil
 	case err := <-errCh:
 		return err
+	}
+}
+
+func (s *Server) connStateHook(port int) func(net.Conn, http.ConnState) {
+	return func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			s.health.IncrConn(port)
+		case http.StateClosed, http.StateHijacked:
+			s.health.DecrConn(port)
+		}
 	}
 }
 
