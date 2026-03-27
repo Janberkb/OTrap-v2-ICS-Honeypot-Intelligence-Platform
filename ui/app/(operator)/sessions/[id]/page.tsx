@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Brain, ChevronLeft, Zap, Shield, Clock, Activity, Download, Network } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
+import { consumeLlmStream, llmPhaseLabel, type LLMStreamMetrics, type LLMStreamPhase } from "@/lib/llm-stream";
 
 type Tab = "timeline" | "iocs" | "artifacts" | "mitre" | "ai";
 
@@ -93,9 +94,24 @@ export default function SessionDetailPage() {
   const [aiType,         setAiType]         = useState<"threat_narrative" | "triage_assist">("threat_narrative");
   const [isStreaming,    setIsStreaming]     = useState(false);
   const [streamingText,  setStreamingText]  = useState("");
+  const [streamingThinking, setStreamingThinking] = useState("");
+  const [streamPhase,    setStreamPhase]     = useState<LLMStreamPhase>("idle");
+  const [streamMetrics,  setStreamMetrics]   = useState<LLMStreamMetrics | null>(null);
+  const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
+  const [streamElapsedMs, setStreamElapsedMs] = useState(0);
+  const [firstChunkAt,   setFirstChunkAt]    = useState<number | null>(null);
   const [pastAnalyses,   setPastAnalyses]   = useState<any[]>([]);
   const [triageResult,   setTriageResult]   = useState<any>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!isStreaming || streamStartedAt === null) return;
+    setStreamElapsedMs(Date.now() - streamStartedAt);
+    const timer = window.setInterval(() => {
+      setStreamElapsedMs(Date.now() - streamStartedAt);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [isStreaming, streamStartedAt]);
 
   useEffect(() => {
     if (!id) return;
@@ -162,9 +178,16 @@ export default function SessionDetailPage() {
 
   async function startAnalysis() {
     if (isStreaming || !id) return;
+    const startedAt = Date.now();
     abortRef.current = new AbortController();
     setIsStreaming(true);
     setStreamingText("");
+    setStreamingThinking("");
+    setStreamPhase("starting");
+    setStreamMetrics(null);
+    setStreamStartedAt(startedAt);
+    setStreamElapsedMs(0);
+    setFirstChunkAt(null);
     setTriageResult(null);
 
     try {
@@ -178,48 +201,70 @@ export default function SessionDetailPage() {
       if (!resp.ok || !resp.body) {
         const err = await resp.json().catch(() => ({}));
         setStreamingText(`[Error ${resp.status}] ${err?.detail || "LLM request failed"}`);
+        setStreamPhase("error");
         return;
       }
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
       let accumulated = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const payload = line.slice(6);
-          if (payload === "[DONE]") {
-            // Try parsing as triage JSON
-            if (aiType === "triage_assist") {
-              try { setTriageResult(JSON.parse(accumulated)); } catch { /* not valid JSON */ }
-            }
-            // Reload past analyses
-            fetch(apiPath(`/llm/outputs/session/${id}`), { credentials: "include" })
-              .then((r) => r.ok ? r.json() : { items: [] })
-              .then((d) => setPastAnalyses(d.items ?? []));
-            break;
-          }
-          try {
-            const chunk = JSON.parse(payload) as string;
-            accumulated += chunk;
-            setStreamingText(accumulated);
-          } catch { /* skip malformed */ }
+      let accumulatedThinking = "";
+      let firstChunkSeenAt: number | null = null;
+      await consumeLlmStream(resp, (event) => {
+        if (event.type === "status") {
+          setStreamPhase(event.phase);
+          return;
         }
-      }
+        if (event.type === "content") {
+          if (firstChunkSeenAt === null) {
+            firstChunkSeenAt = Date.now();
+            setFirstChunkAt(firstChunkSeenAt);
+          }
+          accumulated += event.delta;
+          setStreamingText(accumulated);
+          setStreamPhase("generating");
+          return;
+        }
+        if (event.type === "thinking") {
+          if (firstChunkSeenAt === null) {
+            firstChunkSeenAt = Date.now();
+            setFirstChunkAt(firstChunkSeenAt);
+          }
+          accumulatedThinking += event.delta;
+          setStreamingThinking(accumulatedThinking);
+          setStreamPhase("generating");
+          return;
+        }
+        if (event.type === "metrics") {
+          setStreamMetrics(event.metrics);
+          return;
+        }
+        if (event.type === "error") {
+          setStreamingText((prev) => prev ? `${prev}\n\n${event.message}` : event.message);
+          setStreamPhase("error");
+          return;
+        }
+        if (event.type === "done") {
+          if (aiType === "triage_assist") {
+            try { setTriageResult(JSON.parse(accumulated)); } catch { /* not valid JSON */ }
+          }
+          setStreamPhase((prev) => prev === "error" ? prev : "done");
+          fetch(apiPath(`/llm/outputs/session/${id}`), { credentials: "include" })
+            .then((r) => r.ok ? r.json() : { items: [] })
+            .then((d) => setPastAnalyses(d.items ?? []));
+        }
+      });
     } catch (e: any) {
-      if (e?.name !== "AbortError") setStreamingText("[Analysis cancelled or connection lost]");
+      if (e?.name !== "AbortError") {
+        setStreamingText("[Analysis cancelled or connection lost]");
+        setStreamPhase("error");
+      }
     } finally {
+      setStreamElapsedMs(Date.now() - startedAt);
       setIsStreaming(false);
     }
   }
 
   function stopAnalysis() {
     abortRef.current?.abort();
+    setStreamPhase("idle");
     setIsStreaming(false);
   }
 
@@ -239,6 +284,10 @@ export default function SessionDetailPage() {
     { id: "mitre",     label: "MITRE ATT&CK" },
     { id: "ai",        label: "AI Analysis" },
   ];
+  const firstChunkDelayMs = firstChunkAt !== null && streamStartedAt !== null
+    ? firstChunkAt - streamStartedAt
+    : null;
+  const showStreamPanel = Boolean(streamingText || streamingThinking || isStreaming || streamMetrics);
 
   return (
     <div className="p-6 space-y-4 animate-fade-in">
@@ -607,13 +656,57 @@ export default function SessionDetailPage() {
                   </span>
                 )}
                 {isStreaming && (
-                  <span className="text-xs text-accent animate-pulse">Generating…</span>
+                  <span className="text-xs text-accent animate-pulse">{llmPhaseLabel(streamPhase)}</span>
                 )}
               </div>
 
+              {(isStreaming || streamPhase === "done" || streamPhase === "error") && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                    Status: <span className="text-text-primary">{llmPhaseLabel(streamPhase)}</span>
+                  </span>
+                  {streamStartedAt !== null && (
+                    <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                      Elapsed: <span className="text-text-primary">{formatDuration(streamElapsedMs / 1000)}</span>
+                    </span>
+                  )}
+                  {firstChunkDelayMs !== null && (
+                    <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                      First token: <span className="text-text-primary">{formatDuration(firstChunkDelayMs / 1000)}</span>
+                    </span>
+                  )}
+                  {streamMetrics?.tokens_per_second !== undefined && (
+                    <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                      Throughput: <span className="text-text-primary">{streamMetrics.tokens_per_second.toFixed(1)} tok/s</span>
+                    </span>
+                  )}
+                  {streamMetrics?.eval_count !== undefined && (
+                    <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                      Output tokens: <span className="text-text-primary">{streamMetrics.eval_count}</span>
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {isStreaming && streamPhase !== "generating" && streamElapsedMs >= 15000 && (
+                <p className="text-xs text-text-faint">
+                  Local model is still preparing a response. Larger models may stay quiet for a while before the first token arrives.
+                </p>
+              )}
+
               {/* Streaming output */}
-              {streamingText && (
-                <div className="card p-4">
+              {showStreamPanel && (
+                <div className="card p-4 space-y-4">
+                  {streamingThinking && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-text-muted uppercase tracking-wider">Model Notes</p>
+                      <pre className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed font-sans border border-bg-border rounded-lg p-3 bg-bg-elevated/40">
+                        {streamingThinking}
+                        {isStreaming && !streamingText && <span className="inline-block w-2 h-4 bg-accent ml-0.5 animate-pulse align-middle" />}
+                      </pre>
+                    </div>
+                  )}
+
                   {/* Triage assist JSON result */}
                   {aiType === "triage_assist" && triageResult ? (
                     <div className="space-y-3">
@@ -634,11 +727,37 @@ export default function SessionDetailPage() {
                         Apply Recommendation
                       </button>
                     </div>
-                  ) : (
+                  ) : streamingText ? (
                     <pre className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed font-sans">
                       {streamingText}
                       {isStreaming && <span className="inline-block w-2 h-4 bg-accent ml-0.5 animate-pulse align-middle" />}
                     </pre>
+                  ) : (
+                    <div className="rounded-lg border border-bg-border p-3 text-sm text-text-faint bg-bg-elevated/30">
+                      {isStreaming
+                        ? "Awaiting the first response chunk from the local model…"
+                        : "The stream completed without textual output."}
+                    </div>
+                  )}
+
+                  {streamMetrics && (
+                    <div className="flex flex-wrap gap-2 text-xs border-t border-bg-border pt-3">
+                      {streamMetrics.total_duration_ms !== undefined && (
+                        <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                          Total: <span className="text-text-primary">{formatDuration(streamMetrics.total_duration_ms / 1000)}</span>
+                        </span>
+                      )}
+                      {streamMetrics.load_duration_ms !== undefined && (
+                        <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                          Load: <span className="text-text-primary">{formatDuration(streamMetrics.load_duration_ms / 1000)}</span>
+                        </span>
+                      )}
+                      {streamMetrics.prompt_eval_count !== undefined && (
+                        <span className="bg-bg-elevated border border-bg-border px-2 py-1 rounded text-text-muted">
+                          Prompt tokens: <span className="text-text-primary">{streamMetrics.prompt_eval_count}</span>
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

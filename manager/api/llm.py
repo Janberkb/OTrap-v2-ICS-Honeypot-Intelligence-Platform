@@ -332,13 +332,14 @@ async def _stream_session(
     full_text = ""
 
     try:
-        async for chunk in client.stream_chat(messages, model):
-            full_text += chunk
-            yield f"data: {json.dumps(chunk)}\n\n"
+        async for event in client.stream_chat(messages, model):
+            if event.get("type") == "content":
+                full_text += event.get("delta", "")
+            yield f"data: {json.dumps(event)}\n\n"
     except Exception as e:
-        err_chunk = f"\n\n[Error communicating with LLM: {e}]"
+        err_chunk = f"[Error communicating with LLM: {e}]"
         full_text += err_chunk
-        yield f"data: {json.dumps(err_chunk)}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'message': err_chunk})}\n\n"
 
     yield "data: [DONE]\n\n"
 
@@ -373,13 +374,14 @@ async def _stream_attacker(
     full_text = ""
 
     try:
-        async for chunk in client.stream_chat(messages, model):
-            full_text += chunk
-            yield f"data: {json.dumps(chunk)}\n\n"
+        async for event in client.stream_chat(messages, model):
+            if event.get("type") == "content":
+                full_text += event.get("delta", "")
+            yield f"data: {json.dumps(event)}\n\n"
     except Exception as e:
-        err_chunk = f"\n\n[Error communicating with LLM: {e}]"
+        err_chunk = f"[Error communicating with LLM: {e}]"
         full_text += err_chunk
-        yield f"data: {json.dumps(err_chunk)}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'message': err_chunk})}\n\n"
 
     yield "data: [DONE]\n\n"
 
