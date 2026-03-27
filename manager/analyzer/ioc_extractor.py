@@ -8,7 +8,6 @@ from typing import Any
 
 
 # Patterns for automatic IOC extraction
-_IPV4_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
 _SQL_RE   = re.compile(r"(select|union|insert|update|delete|drop|exec|xp_)", re.I)
 _PATH_RE  = re.compile(r"(\.\./|\.\.\\|/etc/|/windows/)", re.I)
 

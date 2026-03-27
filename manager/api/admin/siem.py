@@ -4,10 +4,8 @@ manager/api/admin/siem.py — SIEM configuration, test, and delivery log.
 
 from __future__ import annotations
 
-import json
 import logging
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -16,6 +14,7 @@ from manager.db.engine import get_db
 from manager.api.auth import require_admin, require_reauth
 from manager.security.hashing import encrypt_secret, decrypt_secret
 from manager.security.audit import write_audit
+from manager.notifications.siem_forwarder import _deliver
 
 router = APIRouter(prefix="/siem", tags=["admin-siem"])
 logger = logging.getLogger("otrap.siem")
@@ -133,19 +132,6 @@ async def get_delivery_log(
         }
         for l in logs
     ]}
-
-
-async def _deliver(siem_type: str, url: str, token: str | None, payload: dict) -> int:
-    headers = {"Content-Type": "application/json"}
-    if token:
-        if siem_type == "splunk_hec":
-            headers["Authorization"] = f"Splunk {token}"
-        else:
-            headers["Authorization"] = f"Bearer {token}"
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.post(url, headers=headers, content=json.dumps(payload))
-        return r.status_code
 
 
 def _build_test_event() -> dict:

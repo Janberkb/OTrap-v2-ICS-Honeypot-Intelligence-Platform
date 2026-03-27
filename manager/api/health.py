@@ -68,27 +68,35 @@ async def get_health(request: Request, db=Depends(get_db)) -> dict:
     }
 
     # ── Local LLM (Ollama / LM Studio) ───────────────────────────────────────
+    # Read effective config from DB first (admin may override env defaults via UI),
+    # then fall back to env-based settings.
     import httpx
     from manager.config import settings as app_settings
-    if app_settings.llm_enabled:
-        # Determine health URL per backend
-        if app_settings.llm_backend == "lmstudio":
-            health_url = f"{app_settings.lm_studio_base_url}/v1/models"
+    llm_cfg = await models.AppConfig.get(db)
+    llm_enabled  = (llm_cfg.llm_enabled  if llm_cfg and llm_cfg.llm_enabled  is not None else app_settings.llm_enabled)
+    llm_backend  = (llm_cfg.llm_backend  if llm_cfg and llm_cfg.llm_backend               else app_settings.llm_backend)
+    llm_base_url = (llm_cfg.llm_base_url if llm_cfg and llm_cfg.llm_base_url               else None)
+
+    if llm_enabled:
+        if llm_backend == "lmstudio":
+            effective_base = llm_base_url or app_settings.lm_studio_base_url
+            health_url = f"{effective_base}/v1/models"
         else:
-            health_url = f"{app_settings.ollama_base_url}/api/tags"
+            effective_base = llm_base_url or app_settings.ollama_base_url
+            health_url = f"{effective_base}/api/tags"
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 r = await client.get(health_url)
             services["llm_engine"] = {
                 "status":  "healthy" if r.status_code == 200 else "unhealthy",
-                "detail":  f"{app_settings.llm_backend} HTTP {r.status_code}",
-                "backend": app_settings.llm_backend,
+                "detail":  f"{llm_backend} HTTP {r.status_code}",
+                "backend": llm_backend,
             }
         except Exception as e:
             services["llm_engine"] = {
                 "status":  "unhealthy",
                 "detail":  str(e),
-                "backend": app_settings.llm_backend,
+                "backend": llm_backend,
             }
     else:
         services["llm_engine"] = {"status": "disabled"}

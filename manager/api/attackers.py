@@ -4,12 +4,18 @@ manager/api/attackers.py — Attacker IP profile (aggregated view).
 
 from __future__ import annotations
 
+import json
+import uuid as uuid_mod
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
 from manager.db import models
 from manager.db.engine import get_db
 from manager.api.auth import get_current_user
+from manager.security.audit import write_audit
 
 router = APIRouter(prefix="/attackers", tags=["attackers"])
 
@@ -106,6 +112,92 @@ async def fetch_attacker_ioc_type_distribution(db, ip: str) -> list[dict]:
         .order_by(func.count().desc(), dedup.c.ioc_type.asc())
     )
     return [{"ioc_type": r.ioc_type, "count": int(r.cnt)} for r in rows]
+
+
+@router.get("/{ip}/export/stix")
+async def export_attacker_stix(
+    ip: str,
+    request: Request,
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+) -> StreamingResponse:
+    """Export a STIX 2.1 bundle aggregating all IOCs observed from this attacker IP."""
+    # Fetch all deduplicated IOCs for this IP across all sessions
+    rows = (
+        await db.execute(
+            select(
+                models.IOC.ioc_type,
+                models.IOC.value,
+                func.max(models.IOC.confidence).label("confidence"),
+                func.min(models.IOC.first_seen_at).label("first_seen_at"),
+                func.max(models.IOC.context).label("context"),
+            )
+            .join(models.Session, models.IOC.session_id == models.Session.id)
+            .where(models.Session.source_ip == ip)
+            .group_by(models.IOC.ioc_type, models.IOC.value)
+            .order_by(func.min(models.IOC.first_seen_at).asc())
+        )
+    ).all()
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    stix_objects = []
+    for ioc in rows:
+        if ioc.ioc_type == "ip":
+            pattern = f"[ipv4-addr:value = '{ioc.value}']"
+        elif ioc.ioc_type == "domain":
+            pattern = f"[domain-name:value = '{ioc.value}']"
+        elif ioc.ioc_type == "url":
+            pattern = f"[url:value = '{ioc.value}']"
+        elif ioc.ioc_type == "hash_md5":
+            pattern = f"[file:hashes.MD5 = '{ioc.value}']"
+        elif ioc.ioc_type == "hash_sha256":
+            pattern = f"[file:hashes.'SHA-256' = '{ioc.value}']"
+        else:
+            pattern = f"[artifact:payload_bin = '{ioc.value}']"
+
+        valid_from = ioc.first_seen_at
+        if valid_from:
+            valid_from = valid_from.isoformat().replace("+00:00", "Z")
+            if not valid_from.endswith("Z"):
+                valid_from += "Z"
+        else:
+            valid_from = now_iso
+
+        stix_objects.append({
+            "type":         "indicator",
+            "spec_version": "2.1",
+            "id":           f"indicator--{uuid_mod.uuid4()}",
+            "created":      now_iso,
+            "modified":     now_iso,
+            "name":         f"OTrap: {ioc.ioc_type} IOC from attacker {ip}",
+            "description":  ioc.context or f"Observed {ioc.ioc_type}: {ioc.value}",
+            "pattern":      pattern,
+            "pattern_type": "stix",
+            "valid_from":   valid_from,
+            "confidence":   ioc.confidence or 75,
+            "labels":       ["malicious-activity"],
+        })
+
+    bundle = {
+        "type":         "bundle",
+        "id":           f"bundle--{uuid_mod.uuid4()}",
+        "spec_version": "2.1",
+        "objects":      stix_objects,
+    }
+
+    safe_ip = ip.replace(":", "_")
+    await write_audit(
+        db, user, "export_attacker_stix",
+        detail={"ip": ip, "ioc_count": len(stix_objects)},
+        source_ip=request.client.host if request.client else None,
+    )
+
+    return StreamingResponse(
+        iter([json.dumps(bundle, indent=2)]),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=attacker-{safe_ip}-stix.json"},
+    )
 
 
 @router.get("/{ip}/iocs")

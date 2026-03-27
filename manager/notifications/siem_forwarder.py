@@ -4,8 +4,10 @@ manager/notifications/siem_forwarder.py — SIEM delivery (Splunk HEC / Webhook 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import socket
 import uuid
 from datetime import datetime, timezone
@@ -16,6 +18,10 @@ from manager.db import models
 from manager.analyzer.ioc_extractor import extract_iocs
 from manager.security.hashing import decrypt_secret
 
+# Allow operators to opt-in to TLS verification for SIEM endpoints
+# (default False because many enterprise SIEMs use internal/self-signed CAs)
+_SIEM_TLS_VERIFY = os.environ.get("SIEM_TLS_VERIFY", "false").lower() in ("1", "true", "yes")
+
 logger = logging.getLogger("otrap.siem")
 SEVERITY_ORDER = {"noise": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 SEVERITY_NUM   = {"noise": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
@@ -23,7 +29,7 @@ SEVERITY_NUM   = {"noise": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
 SEVERITY_CEF   = {"noise": 0, "low": 3, "medium": 5, "high": 7, "critical": 10}
 
 
-async def maybe_forward_siem(db, ev: dict, session: models.Session, *, force: bool = False) -> None:
+async def maybe_forward_siem(db, ev: dict, session: models.Session, *, force: bool = False, redis=None) -> None:
     cfg = await models.SIEMConfig.get(db)
     if not cfg or not cfg.enabled or not cfg.url:
         return
@@ -39,17 +45,25 @@ async def maybe_forward_siem(db, ev: dict, session: models.Session, *, force: bo
     # Rate-limit — skipped when force=True (rule-triggered) or CPU STOP
     if not force and not is_cpu_stop:
         try:
-            import redis.asyncio as aioredis, os
-            r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
             throttle_key = (
                 f"siem.throttle:{ev.get('source_ip', '')}:{ev.get('protocol', '')}:"
                 f"{ev.get('event_type', '')}:{severity}"
             )
-            if await r.exists(throttle_key):
-                await r.aclose()
-                return
-            await r.setex(throttle_key, 900, "1")
-            await r.aclose()
+            if redis is not None:
+                # Use the app-level Redis connection (preferred)
+                if await redis.exists(throttle_key):
+                    return
+                await redis.setex(throttle_key, 900, "1")
+            else:
+                # Fallback: create a short-lived connection
+                import redis.asyncio as aioredis
+                r = aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+                try:
+                    if await r.exists(throttle_key):
+                        return
+                    await r.setex(throttle_key, 900, "1")
+                finally:
+                    await r.aclose()
         except Exception as e:
             logger.warning("SIEM throttle check failed: %s", e)
 
@@ -87,7 +101,8 @@ async def maybe_forward_siem(db, ev: dict, session: models.Session, *, force: bo
 
 async def _deliver(siem_type: str, url: str, token: str | None, payload: dict) -> int:
     if siem_type == "syslog_cef":
-        return _deliver_syslog_cef(url, payload)
+        # Run blocking UDP socket in thread pool to avoid blocking the event loop
+        return await asyncio.get_event_loop().run_in_executor(None, _deliver_syslog_cef, url, payload)
 
     headers = {"Content-Type": "application/json"}
     if token:
@@ -96,7 +111,7 @@ async def _deliver(siem_type: str, url: str, token: str | None, payload: dict) -
     # Splunk HEC wraps in {"event": ...}
     body = json.dumps({"event": payload} if siem_type == "splunk_hec" else payload)
 
-    async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+    async with httpx.AsyncClient(timeout=10.0, verify=_SIEM_TLS_VERIFY) as client:
         r = await client.post(url, headers=headers, content=body)
         return r.status_code
 
@@ -162,7 +177,8 @@ def _build_cef(payload: dict) -> str:
         ext += f" cs5={_cef_escape(str(metadata['write_value'])[:128])} cs5Label=writeValue"
     ext += f" msg={msg}"
 
-    return f"CEF:0|OTrap|Honeypot Manager|1.0|{event_type}|{event_type}|{cef_sev}|{ext}"
+    safe_event_type = _cef_escape(event_type)
+    return f"CEF:0|OTrap|Honeypot Manager|1.0|{safe_event_type}|{safe_event_type}|{cef_sev}|{ext}"
 
 
 def _build_ecs_payload(ev: dict, session: models.Session) -> dict:

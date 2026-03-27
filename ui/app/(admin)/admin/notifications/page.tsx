@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Bell, Send, Eye, EyeOff } from "lucide-react";
+import { useEffect, useState, useCallback } from "react";
+import { Bell, Send, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { ReauthModal, formatDateTime } from "@/components/ui";
 import { apiPath } from "@/lib/api";
 const getCSRF = () => document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
@@ -14,6 +14,7 @@ export default function NotificationsPage() {
   const [logs,         setLogs]         = useState<any[]>([]);
   const [saving,       setSaving]       = useState(false);
   const [testing,      setTesting]      = useState(false);
+  const [logLoading,   setLogLoading]   = useState(false);
   const [testResult,   setTestResult]   = useState<{ ok: boolean; message: string } | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [reauthOpen,   setReauthOpen]   = useState(false);
@@ -21,11 +22,19 @@ export default function NotificationsPage() {
   const [reauthError,  setReauthError]  = useState("");
   const [pendingAction,setPendingAction]= useState<"save" | null>(null);
 
+  const loadLogs = useCallback(async () => {
+    setLogLoading(true);
+    try {
+      const r = await fetch(apiPath("/admin/smtp/delivery-log"), { credentials: "include" });
+      if (r.ok) setLogs((await r.json()).items ?? []);
+    } finally {
+      setLogLoading(false);
+    }
+  }, []);
+
   async function load() {
-    const [cfgR, logR] = await Promise.all([
-      fetch(apiPath("/admin/smtp"), { credentials: "include" }),
-      fetch(apiPath("/admin/smtp/delivery-log"), { credentials: "include" }),
-    ]);
+    const cfgR = await fetch(apiPath("/admin/smtp"), { credentials: "include" });
+    if (!cfgR.ok) return;
     const d = await cfgR.json();
     setCfg(d);
     setForm({
@@ -42,7 +51,7 @@ export default function NotificationsPage() {
       cooldown_seconds: d.cooldown_seconds ?? 300,
       enabled:         d.enabled ?? false,
     });
-    if (logR.ok) setLogs((await logR.json()).items ?? []);
+    loadLogs();
   }
 
   useEffect(() => { load(); }, []);
@@ -169,8 +178,14 @@ export default function NotificationsPage() {
 
       {/* Delivery log */}
       <div className="card overflow-hidden">
-        <div className="px-4 py-3 border-b border-bg-border">
-          <h2 className="font-semibold text-sm">Email Delivery Log</h2>
+        <div className="px-4 py-3 border-b border-bg-border flex items-center justify-between">
+          <div>
+            <h2 className="font-semibold text-sm">Email Delivery Log</h2>
+            <p className="text-xs text-text-faint mt-0.5">Test emails are not recorded here</p>
+          </div>
+          <button onClick={loadLogs} className="btn-secondary p-1.5" title="Refresh">
+            <RefreshCw className={`w-3.5 h-3.5 ${logLoading ? "animate-spin" : ""}`} />
+          </button>
         </div>
         <table className="data-table">
           <thead>

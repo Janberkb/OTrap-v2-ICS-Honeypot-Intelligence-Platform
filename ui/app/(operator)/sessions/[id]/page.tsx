@@ -100,10 +100,10 @@ export default function SessionDetailPage() {
   useEffect(() => {
     if (!id) return;
     Promise.all([
-      fetch(apiPath(`/sessions/${id}`), { credentials: "include" }).then((r) => r.json()),
-      fetch(apiPath(`/sessions/${id}/timeline`), { credentials: "include" }).then((r) => r.json()),
-      fetch(apiPath(`/sessions/${id}/iocs`), { credentials: "include" }).then((r) => r.json()),
-      fetch(apiPath(`/sessions/${id}/artifacts`), { credentials: "include" }).then((r) => r.json()),
+      fetch(apiPath(`/sessions/${id}`), { credentials: "include" }).then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); }),
+      fetch(apiPath(`/sessions/${id}/timeline`), { credentials: "include" }).then((r) => r.ok ? r.json() : { timeline: [] }),
+      fetch(apiPath(`/sessions/${id}/iocs`), { credentials: "include" }).then((r) => r.ok ? r.json() : { items: [] }),
+      fetch(apiPath(`/sessions/${id}/artifacts`), { credentials: "include" }).then((r) => r.ok ? r.json() : { items: [] }),
     ]).then(([sess, tl, iocData, artData]) => {
       setSession(sess);
       setTimeline(tl.timeline ?? []);
@@ -119,7 +119,8 @@ export default function SessionDetailPage() {
             if (d) setRelatedSessions((d.items ?? []).filter((s: any) => s.id !== id));
           });
       }
-    }).finally(() => setLoading(false));
+    }).catch(() => { /* session not found — setSession stays null, error shown below */ })
+      .finally(() => setLoading(false));
   }, [id]);
 
   function getCsrf() {
@@ -170,7 +171,7 @@ export default function SessionDetailPage() {
       const resp = await fetch(apiPath(`/llm/analyze/session/${id}`), {
         method: "POST",
         signal: abortRef.current.signal,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": getCsrf() },
         credentials: "include",
         body: JSON.stringify({ analysis_type: aiType, model: selectedModel }),
       });

@@ -4,10 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   Brain, ChevronLeft, Globe, Building2, MapPin, Shield, Activity,
-  AlertTriangle, Zap, Clock, Network,
+  AlertTriangle, Zap, Clock, Network, Download,
 } from "lucide-react";
 import { SeverityBadge, SignalTierBadge, formatDateTime, formatDuration } from "@/components/ui";
 import { apiPath } from "@/lib/api";
+
+const getCsrf = () => document.cookie.match(/csrf_token=([^;]+)/)?.[1] ?? "";
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "noise"];
 const SEV_COLOR: Record<string, string> = {
@@ -83,7 +85,7 @@ export default function AttackerProfilePage() {
       const resp = await fetch(apiPath(`/llm/analyze/attacker/${encodeURIComponent(decodedIp)}`), {
         method: "POST",
         signal: abortRef.current.signal,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": getCsrf() },
         credentials: "include",
         body: JSON.stringify({ model: selectedModel }),
       });
@@ -160,30 +162,41 @@ export default function AttackerProfilePage() {
   return (
     <div className="p-6 space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => router.back()} className="btn-secondary p-2">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          {geo.flag && <span className="text-3xl">{geo.flag}</span>}
-          <div>
-            <h1 className="text-xl font-bold font-mono text-text-primary">{decodedIp}</h1>
-            <p className="text-sm text-text-muted">
-              {[geo.city, geo.country_name].filter(Boolean).join(", ") || "Unknown location"}
-              {geo.org && <span className="ml-2 text-text-faint">· {geo.org}</span>}
-            </p>
+          <button onClick={() => router.back()} className="btn-secondary p-2">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-3">
+            {geo.flag && <span className="text-3xl">{geo.flag}</span>}
+            <div>
+              <h1 className="text-xl font-bold font-mono text-text-primary">{decodedIp}</h1>
+              <p className="text-sm text-text-muted">
+                {[geo.city, geo.country_name].filter(Boolean).join(", ") || "Unknown location"}
+                {geo.org && <span className="ml-2 text-text-faint">· {geo.org}</span>}
+              </p>
+            </div>
+            {isPrivateSource && (
+              <span className="flex items-center gap-1 text-accent text-xs font-semibold bg-accent/10 border border-accent/20 px-2 py-1 rounded">
+                <Network className="w-3 h-3" />Internal Source
+              </span>
+            )}
+            {profile.cpu_stop_ever && (
+              <span className="flex items-center gap-1 text-severity-critical text-xs font-semibold bg-severity-critical/10 border border-severity-critical/30 px-2 py-1 rounded">
+                <Zap className="w-3 h-3" />CPU STOP
+              </span>
+            )}
           </div>
-          {isPrivateSource && (
-            <span className="flex items-center gap-1 text-accent text-xs font-semibold bg-accent/10 border border-accent/20 px-2 py-1 rounded">
-              <Network className="w-3 h-3" />Internal Source
-            </span>
-          )}
-          {profile.cpu_stop_ever && (
-            <span className="flex items-center gap-1 text-severity-critical text-xs font-semibold bg-severity-critical/10 border border-severity-critical/30 px-2 py-1 rounded">
-              <Zap className="w-3 h-3" />CPU STOP
-            </span>
-          )}
         </div>
+        {distinctIocCount > 0 && (
+          <a
+            href={apiPath(`/attackers/${encodeURIComponent(decodedIp)}/export/stix`)}
+            download={`attacker-${decodedIp}-stix.json`}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            <Download className="w-4 h-4" />Export STIX
+          </a>
+        )}
       </div>
 
       {/* KPI row */}

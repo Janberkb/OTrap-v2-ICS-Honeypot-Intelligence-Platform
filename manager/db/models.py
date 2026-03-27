@@ -11,10 +11,10 @@ from typing import Optional
 import bcrypt
 from sqlalchemy import (
     Boolean, Column, Float, ForeignKey, Index, Integer,
-    String, Text, UniqueConstraint, delete, text, select, func, update
+    Text, UniqueConstraint, delete, text, select, func, update
 )
 from sqlalchemy.dialects.postgresql import (
-    ARRAY, INET, JSONB, UUID as PGUUID
+    ARRAY, JSONB, UUID as PGUUID
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, relationship

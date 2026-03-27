@@ -12,7 +12,6 @@ It handles:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import time
@@ -21,13 +20,10 @@ from datetime import datetime, timezone
 from typing import AsyncIterator
 
 import grpc
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from manager.db.engine import get_db_session
 from manager.db import models
 from manager.grpc import sensor_pb2, sensor_pb2_grpc
 from manager.grpc.ca import CertificateAuthority
-from manager.security.hashing import verify_bcrypt, hash_bcrypt
 
 logger = logging.getLogger("otrap.grpc.sensor_service")
 

@@ -375,7 +375,7 @@ class AnalyzerWorker:
         try:
             async with self._db_factory() as session:
                 await maybe_send_smtp(session, ev, db_session)
-                await maybe_forward_siem(session, ev, db_session)
+                await maybe_forward_siem(session, ev, db_session, redis=self._redis_broadcast)
                 await evaluate_rules(session, ev, db_session, redis=self._redis_broadcast)
         except Exception as e:
             logger.warning("Notification error", extra={"error": str(e)})

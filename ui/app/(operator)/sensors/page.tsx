@@ -568,6 +568,27 @@ export default function SensorsPage() {
                 {expandedId === s.id && (
                   <tr key={`${s.id}-sessions`} className="bg-bg-surface/50">
                     <td colSpan={colCount} className="px-6 py-3">
+                      {/* Sensor telemetry stats */}
+                      {s.health && (
+                        <div className="flex gap-6 mb-3 pb-3 border-b border-bg-border">
+                          <div>
+                            <p className="text-xs text-text-faint">CPU</p>
+                            <p className="text-sm font-mono font-semibold">{s.health.cpu_percent != null ? `${s.health.cpu_percent.toFixed(1)}%` : "—"}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-text-faint">Memory</p>
+                            <p className="text-sm font-mono font-semibold">{s.health.mem_bytes_rss != null ? `${(s.health.mem_bytes_rss / 1024 / 1024).toFixed(1)} MB` : "—"}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-text-faint">Events Buffered</p>
+                            <p className="text-sm font-mono font-semibold">{s.health.events_buffered ?? "—"}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-text-faint">Events Sent</p>
+                            <p className="text-sm font-mono font-semibold">{s.health.events_sent_total ?? "—"}</p>
+                          </div>
+                        </div>
+                      )}
                       {sessionsLoading ? (
                         <p className="text-xs text-text-faint">Loading sessions…</p>
                       ) : expandedSessions.length === 0 ? (

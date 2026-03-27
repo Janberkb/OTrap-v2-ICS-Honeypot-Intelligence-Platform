@@ -28,10 +28,11 @@ export default function SIEMPage() {
       fetch(apiPath("/admin/siem"), { credentials: "include" }),
       fetch(apiPath("/admin/siem/delivery-log"), { credentials: "include" }),
     ]);
+    if (!cfgR.ok) return;
     const d = await cfgR.json();
     setCfg(d);
     setForm({ siem_type: d.siem_type ?? "splunk_hec", url: d.url ?? "", token: "", min_severity: d.min_severity ?? "medium", enabled: d.enabled ?? false });
-    setLogs((await logR.json()).items ?? []);
+    if (logR.ok) setLogs((await logR.json()).items ?? []);
   }
 
   useEffect(() => { load(); }, []);
