@@ -36,7 +36,7 @@ OTrap is a distributed ICS/OT honeypot platform that deploys stateful protocol e
 
 **Sensor Mesh**
 - Go binary sensor with gRPC + mTLS communication
-- Sensors dial out to manager — no inbound management ports required
+- Sensors dial out to manager — no inbound management-plane ports required on the sensor host
 - Per-sensor dynamic certificate issuance via internal CA
 - Single-use join tokens with configurable TTL
 - Real-time CPU, memory, and event buffer telemetry
@@ -50,8 +50,8 @@ OTrap is a distributed ICS/OT honeypot platform that deploys stateful protocol e
 
 **Integrations**
 - SMTP alert emails with severity filtering and cooldown
-- SIEM forwarding: Splunk HEC, Generic Webhook, Syslog/CEF (STIX-compatible)
-- Local LLM: Ollama and LM Studio (OpenAI-compatible API)
+- SIEM forwarding: Splunk HEC, Generic Webhook, Syslog/CEF
+- Local LLM backends: Ollama and LM Studio
 
 ---
 
@@ -183,7 +183,7 @@ Docker Desktop includes both the engine and the Compose plugin. After installati
 
 ### Recommended Installation Flow
 
-This expands the Quick Start above. If you already ran those commands, you can continue from **Step 4**.
+This expands the Quick Start above. If you already ran those commands, you can continue from **Step 2**.
 
 This single flow covers:
 
@@ -192,29 +192,20 @@ This single flow covers:
 
 Use `./scripts/install_manager.sh` as the canonical install command. `make install-manager` only wraps the same script, so the README uses the script directly and avoids requiring `make`.
 
-**Step 1 — Clone the repository**
+**Step 1 — Prepare `.env` and install the manager**
 
 ```bash
 git clone https://github.com/Janberkb/OTrap-v2-ICS-Honeypot-Intelligence-Platform.git otrap
 cd otrap
-```
-
-**Step 2 — Configure environment**
-
-```bash
 cp .env.example .env
+# Optional: edit .env first if you want to set your own admin password
+./scripts/install_manager.sh
 ```
 
-Open `.env`. For a quick start you can leave all `CHANGE_ME` values as-is because the installer auto-generates strong secrets. If you want to set your own admin password:
+For a quick start you can leave all `CHANGE_ME` values as-is because the installer auto-generates strong secrets. If you want to set your own admin password before installing, edit `.env` and set:
 
 ```dotenv
 INITIAL_ADMIN_PASSWORD=YourStrongPasswordHere
-```
-
-**Step 3 — Install the manager**
-
-```bash
-./scripts/install_manager.sh
 ```
 
 The installer:
@@ -235,7 +226,7 @@ At the end you will see:
   Admin password: <generated>
 ```
 
-**Step 4 — Verify the manager address used in sensor onboarding**
+**Step 2 — Verify the manager address used in sensor onboarding**
 
 Fresh installs usually auto-fill these values for you. Before generating sensor commands, verify that the address in `.env` matches how sensor hosts will actually reach the manager.
 
@@ -258,7 +249,7 @@ docker compose up -d manager
 
 The UI warns you if `SENSOR_PUBLIC_MANAGER_ADDR` still points to loopback or an unusable wildcard host.
 
-**Step 5 — Log into the UI and create sensors**
+**Step 3 — Log into the UI and create sensors**
 
 1. Open the management UI (`http://localhost:3000` on a local install) and log in as the superadmin.
 2. Go to **Sensors → Add Sensor**.
@@ -274,7 +265,7 @@ The UI generates:
 
 This is the recommended sensor onboarding flow for both a single local sensor and multiple remote sensors. Repeat the same UI flow for every additional host.
 
-**Step 6 — Verify the sensor**
+**Step 4 — Verify the sensor**
 
 The sensor should appear as **active** on the Sensors page within seconds. On the target host you can also check:
 
@@ -441,7 +432,7 @@ Configure in **Admin → Notifications**:
 
 - SMTP host, port, TLS mode, From/To addresses
 - Minimum severity threshold (low / medium / high / critical)
-- Per-rule notification toggle in **Alert Rules**
+- Rule actions in **Alert Rules** can force SMTP delivery or auto-triage matching sessions
 
 Use [Mailhog](https://github.com/mailhog/MailHog) for local testing:
 
@@ -645,7 +636,7 @@ docker compose build
 docker compose up -d
 ```
 
-Database schema migrations are applied automatically on manager startup via Alembic.
+Database schema bootstrap and idempotent compatibility updates are applied automatically on manager startup. No separate migration command is required for normal updates.
 
 ---
 
